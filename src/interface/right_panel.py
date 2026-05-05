@@ -6,6 +6,8 @@ from PyQt5.QtWidgets import (
 )
 
 from .config import RIGHT_PANEL_WIDTH, FONT_FAMILY
+from .interface_manager import interface_manager, FocusResultData
+from .mock_data_manager import mock_data_manager
 
 
 class RightPanel(QFrame):
@@ -18,12 +20,40 @@ class RightPanel(QFrame):
         self.setMinimumWidth(RIGHT_PANEL_WIDTH)
         self.setStyleSheet("background-color: #1A1A3A; border-radius: 8px;")
         self.is_running = False
+        self.use_simulation = True
         self.init_ui()
         self.score_updated.connect(self.update_scores)
-        
+        self._register_interface_callback()
+
         self.simulation_timer = QTimer()
         self.simulation_timer.timeout.connect(self.generate_simulated_data)
         self.simulation_interval = 1000
+
+    def _register_interface_callback(self):
+        """注册接口管理器的专注度结果回调"""
+        interface_manager.register_focus_result_callback(self.on_focus_result_received)
+
+    def on_focus_result_received(self, data: FocusResultData):
+        """
+        SEI-01: 接收状态估计模块发送的专注度评分结果
+        用于更新UI显示
+        """
+        if self.use_simulation:
+            return
+
+        score_dict = {
+            "head_pose": data.head_pose_score,
+            "behavior": data.behavior_score,
+            "expression": data.expression_score,
+            "evidence": data.evidence_score,
+            "people": data.people_score,
+            "final_focus": data.final_focus_score
+        }
+        self.score_updated.emit(score_dict)
+
+        if data.warn_msg:
+            warn_text = f"{data.warn_msg.get('type', '')}: {data.warn_msg.get('detail', '')}"
+            self.parent().parent().video_widget.update_warn(warn_text)
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -159,30 +189,9 @@ class RightPanel(QFrame):
             self.curve_line.setData(self.curve_data)
 
     def generate_simulated_data(self):
-        import random
-        
-        base_expression = 85
-        base_behavior = 92
-        base_background = 78
-        
-        expression_variation = random.randint(-10, 10)
-        behavior_variation = random.randint(-8, 8)
-        background_variation = random.randint(-5, 5)
-        
-        expression = max(60, min(100, base_expression + expression_variation))
-        behavior = max(70, min(100, base_behavior + behavior_variation))
-        background = max(65, min(100, base_background + background_variation))
-        
-        final_focus = (expression * 0.4 + behavior * 0.4 + background * 0.2)
-        
-        score_dict = {
-            "expression": int(expression),
-            "behavior": int(behavior),
-            "background": int(background),
-            "final_focus": final_focus
-        }
-        
-        self.score_updated.emit(score_dict)
+        score_dict = mock_data_manager.generate_realtime_scores()
+        if score_dict:
+            self.score_updated.emit(score_dict)
 
     def on_control_click(self):
         if not self.is_running:
