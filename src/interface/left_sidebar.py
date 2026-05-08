@@ -30,8 +30,9 @@ class LeftSideBar(QFrame):
 
         self.refresh_btn = QLabel("🔄")
         self.refresh_btn.setFont(QFont(*get_font("md")))
-        self.refresh_btn.setStyleSheet(f"color: {COLORS['text_hint']}; padding-right: {SIZES['spacing']['md']}px; cursor: pointer;")
+        self.refresh_btn.setStyleSheet(f"color: {COLORS['text_hint']}; padding-right: {SIZES['spacing']['md']}px;")
         self.refresh_btn.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.refresh_btn.setCursor(Qt.PointingHandCursor)
 
         title_layout = QHBoxLayout()
         title_layout.addWidget(camera_title)
