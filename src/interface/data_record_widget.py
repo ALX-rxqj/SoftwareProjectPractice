@@ -2,94 +2,53 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtWidgets import (
     QFrame, QVBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
-    QHeaderView, QPushButton, QHBoxLayout
+    QHeaderView, QHBoxLayout
 )
 
-from .config import RIGHT_PANEL_WIDTH, FONT_FAMILY
+from .styles import COLORS, FONTS, SIZES, get_style, get_font, get_spacing
 
 
 class DataRecordWidget(QFrame):
-    record_selected = pyqtSignal(dict)
+    session_selected = pyqtSignal(dict)
     record_deleted = pyqtSignal(str, dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumWidth(RIGHT_PANEL_WIDTH)
-        self.setStyleSheet("background-color: #1A1A3A; border-radius: 8px;")
-        self.current_face_id = None
-        self.current_records = []
+        self.setMinimumWidth(400)
+        self.setStyleSheet(get_style("container"))
+        self.current_filter = {}
+        self.current_sessions = []
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(16)
+        layout.setContentsMargins(
+            get_spacing("xl"), get_spacing("xl"), 
+            get_spacing("xl"), get_spacing("xl")
+        )
+        layout.setSpacing(get_spacing("xl"))
 
         header_layout = QHBoxLayout()
-        title_label = QLabel("分析记录")
-        title_label.setFont(QFont(FONT_FAMILY, 14, QFont.Bold))
-        title_label.setStyleSheet("color: #FFFFFF;")
+        title_label = QLabel("📋 会话列表")
+        title_label.setFont(QFont(*get_font("xl", "bold")))
+        title_label.setStyleSheet(get_style("label_title"))
 
-        self.face_id_label = QLabel("")
-        self.face_id_label.setFont(QFont(FONT_FAMILY, 11))
-        self.face_id_label.setStyleSheet("color: #AAAAAA; background-color: #252545; padding: 4px 12px; border-radius: 12px;")
+        self.filter_info_label = QLabel("")
+        self.filter_info_label.setFont(QFont(*get_font("xs")))
+        self.filter_info_label.setStyleSheet(
+            f"color: {COLORS['text_hint']}; background-color: {COLORS['card']}; padding: 4px 12px; border-radius: 12px;"
+        )
 
         header_layout.addWidget(title_label)
-        header_layout.addWidget(self.face_id_label)
+        header_layout.addWidget(self.filter_info_label)
         header_layout.addStretch()
-
-        self.delete_btn = QPushButton("🗑️ 删除")
-        self.delete_btn.setFont(QFont(FONT_FAMILY, 11))
-        self.delete_btn.setFixedSize(80, 32)
-        self.delete_btn.setStyleSheet("""
-            QPushButton {
-                color: #FFFFFF;
-                background-color: #4A2A3A;
-                border: none;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #5A3A4A;
-            }
-            QPushButton:disabled {
-                background-color: #2A2A3A;
-                color: #666666;
-            }
-        """)
-        self.delete_btn.setEnabled(False)
-        self.delete_btn.clicked.connect(self.on_delete_clicked)
-        header_layout.addWidget(self.delete_btn)
-
         layout.addLayout(header_layout)
 
         self.record_table = QTableWidget()
-        self.record_table.setColumnCount(6)
-        self.record_table.setHorizontalHeaderLabels(["日期", "时间", "会话ID", "专注度", "表情评分", "行为评分"])
-        self.record_table.setFont(QFont(FONT_FAMILY, 11))
-        self.record_table.setStyleSheet("""
-            QTableWidget {
-                background-color: #0F0F25;
-                border: none;
-                border-radius: 6px;
-                color: #FFFFFF;
-                gridline-color: #2D2D5A;
-            }
-            QTableWidget::item {
-                padding: 10px;
-                border-bottom: 1px solid #2D2D5A;
-            }
-            QTableWidget::item:selected {
-                background-color: #353560;
-            }
-            QHeaderView::section {
-                background-color: #252545;
-                color: #AAAAAA;
-                padding: 10px;
-                border: none;
-                border-bottom: 2px solid #353560;
-                font-weight: bold;
-            }
-        """)
+        self.record_table.setColumnCount(7)
+        self.record_table.setHorizontalHeaderLabels(["会话 ID", "日期", "开始时间", "结束时间", "模式", "平均专注度", "异常事件"])
+        self.record_table.setFont(QFont(*get_font("base")))
+        self.record_table.setStyleSheet(get_style("table"))
         self.record_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.record_table.verticalHeader().setVisible(False)
         self.record_table.setAlternatingRowColors(False)
@@ -98,83 +57,76 @@ class DataRecordWidget(QFrame):
         self.record_table.itemClicked.connect(self.on_record_clicked)
         layout.addWidget(self.record_table)
 
-        hint_label = QLabel("选中记录后点击删除按钮移除")
-        hint_label.setFont(QFont(FONT_FAMILY, 10))
-        hint_label.setStyleSheet("color: #888888;")
+        hint_label = QLabel("点击会话记录查看详情（调试模式）")
+        hint_label.setFont(QFont(*get_font("xs")))
+        hint_label.setStyleSheet(get_style("label_hint"))
         hint_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(hint_label)
 
-    def load_records(self, face_id, records):
-        self.current_face_id = face_id
-        self.current_records = list(records)
-        self.face_id_label.setText(f"👤 {face_id}")
-        self.record_table.setRowCount(len(records))
+    def load_sessions(self, filter_params: dict, sessions: list):
+        self.current_filter = filter_params
+        self.current_sessions = list(sessions)
 
-        for row, record in enumerate(records):
-            bg_color = "#0F0F25" if row % 2 == 0 else "#1A1A3A"
+        filter_text = f"📅 {filter_params.get('start_date', '')} ~ {filter_params.get('end_date', '')}"
+        if filter_params.get('mode'):
+            filter_text += f" | {filter_params['mode']}"
+        filter_text += f" | 专注度: {filter_params.get('focus_min', 0)}-{filter_params.get('focus_max', 100)}"
+        filter_text += f" | 异常: {filter_params.get('abnormal_min', 0)}-{filter_params.get('abnormal_max', 100)}"
+        self.filter_info_label.setText(filter_text)
 
-            date_item = QTableWidgetItem(record.get("date", ""))
-            time_item = QTableWidgetItem(record.get("time", ""))
-            session_item = QTableWidgetItem(record.get("session_id", ""))
-            focus_item = QTableWidgetItem(f"{record.get('focus_score', 0):.1f}")
-            expression_item = QTableWidgetItem(str(record.get("expression_score", 0)))
-            behavior_item = QTableWidgetItem(str(record.get("behavior_score", 0)))
+        self.record_table.setRowCount(len(sessions))
 
-            for item in [date_item, time_item, session_item, focus_item, expression_item, behavior_item]:
-                item.setTextAlignment(Qt.AlignCenter)
+        for row, session in enumerate(sessions):
+            bg_color = COLORS["background"] if row % 2 == 0 else COLORS["background_sidebar"]
+
+            session_id = session.get("session_id", "")
+            start_time = session.get("start_time", "")
+            end_time = session.get("end_time", "")
+            mode = session.get("mode", "")
+            avg_focus = session.get("avg_focus_score", 0)
+            abnormal_count = session.get("abnormal_event_count", 0)
+
+            date_str = start_time.split(" ")[0] if " " in start_time else start_time
+            time_start = start_time.split(" ")[1] if " " in start_time else start_time
+            time_end = end_time.split(" ")[1] if " " in end_time else end_time
+
+            items = [
+                QTableWidgetItem(session_id),
+                QTableWidgetItem(date_str),
+                QTableWidgetItem(time_start),
+                QTableWidgetItem(time_end),
+                QTableWidgetItem(mode),
+                QTableWidgetItem(f"{avg_focus:.1f}"),
+                QTableWidgetItem(str(abnormal_count))
+            ]
+
+            for col, item in enumerate(items):
+                item.setForeground(QColor(COLORS["text"]))
                 item.setBackground(QColor(bg_color))
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                item.setTextAlignment(Qt.AlignCenter)
+                self.record_table.setItem(row, col, item)
 
-            self.record_table.setItem(row, 0, date_item)
-            self.record_table.setItem(row, 1, time_item)
-            self.record_table.setItem(row, 2, session_item)
-            self.record_table.setItem(row, 3, focus_item)
-            self.record_table.setItem(row, 4, expression_item)
-            self.record_table.setItem(row, 5, behavior_item)
-
-        self.delete_btn.setEnabled(False)
-
-    def clear_records(self):
-        self.current_face_id = None
-        self.current_records = []
-        self.face_id_label.setText("")
-        self.record_table.setRowCount(0)
-        self.delete_btn.setEnabled(False)
+            focus_item = self.record_table.item(row, 5)
+            if avg_focus >= 70:
+                focus_item.setForeground(QColor(COLORS["focus_high"]))
+            elif avg_focus < 50:
+                focus_item.setForeground(QColor(COLORS["focus_low"]))
+            else:
+                focus_item.setForeground(QColor(COLORS["focus_medium"]))
 
     def on_record_clicked(self, item):
         row = item.row()
-        self.record_table.selectRow(row)
-        self.delete_btn.setEnabled(True)
-
-        record_data = {
-            "date": self.record_table.item(row, 0).text(),
-            "time": self.record_table.item(row, 1).text(),
-            "session_id": self.record_table.item(row, 2).text(),
-            "focus_score": float(self.record_table.item(row, 3).text()),
-            "expression_score": int(self.record_table.item(row, 4).text()),
-            "behavior_score": int(self.record_table.item(row, 5).text())
-        }
-        self.record_selected.emit(record_data)
-
-    def on_delete_clicked(self):
-        selected_rows = self.record_table.selectionModel().selectedRows()
-        if not selected_rows:
-            return
-
-        row = selected_rows[0].row()
-        record_data = {
-            "date": self.record_table.item(row, 0).text(),
-            "time": self.record_table.item(row, 1).text(),
-            "session_id": self.record_table.item(row, 2).text(),
-            "focus_score": float(self.record_table.item(row, 3).text()),
-            "expression_score": int(self.record_table.item(row, 4).text()),
-            "behavior_score": int(self.record_table.item(row, 5).text())
-        }
-
-        self.record_table.removeRow(row)
-        self.current_records.pop(row)
-
-        if self.current_face_id:
-            self.record_deleted.emit(self.current_face_id, record_data)
-
-        self.delete_btn.setEnabled(False)
+        if row < len(self.current_sessions):
+            session_data = self.current_sessions[row]
+            print(f"[DataRecordWidget] 点击会话记录:")
+            print(f"  会话ID: {session_data.get('session_id')}")
+            print(f"  日期: {session_data.get('start_time', '').split(' ')[0] if ' ' in session_data.get('start_time', '') else session_data.get('start_time')}")
+            print(f"  时间范围: {session_data.get('start_time')} ~ {session_data.get('end_time')}")
+            print(f"  模式: {session_data.get('mode')}")
+            print(f"  平均专注度: {session_data.get('avg_focus_score')}")
+            print(f"  异常事件数: {session_data.get('abnormal_event_count')}")
+            print(f"  --- 查询专注度评分记录条件 ---")
+            print(f"  session_id: {session_data.get('session_id')}")
+            print(f"  start_time: {session_data.get('start_time')}")
+            print(f"  end_time: {session_data.get('end_time')}")
+            self.session_selected.emit(session_data)

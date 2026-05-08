@@ -4,7 +4,8 @@ from PyQt5.QtWidgets import (
     QFrame, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QWidget, QHBoxLayout
 )
 
-from .config import LEFT_BAR_WIDTH, FONT_FAMILY
+from .config import LEFT_BAR_WIDTH
+from .styles import COLORS, FONTS, SIZES, get_style, get_font, get_spacing
 
 
 class LeftSideBar(QFrame):
@@ -13,23 +14,23 @@ class LeftSideBar(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumWidth(LEFT_BAR_WIDTH)
-        self.setStyleSheet("background-color: #1A1A3A; border-radius: 8px;")
+        self.setStyleSheet(get_style("frame_sidebar"))
         self._cameras = []
         self._current_device_id = 0
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 20, 16, 20)
-        layout.setSpacing(20)
+        layout.setContentsMargins(get_spacing("xl"), get_spacing("xxl"), get_spacing("xl"), get_spacing("xxl"))
+        layout.setSpacing(get_spacing("xxl"))
 
         camera_title = QLabel("摄像头列表")
-        camera_title.setFont(QFont(FONT_FAMILY, 12))
-        camera_title.setStyleSheet("color: #AAAAAA; padding-left: 8px;")
+        camera_title.setFont(QFont(*get_font("md")))
+        camera_title.setStyleSheet(f"color: {COLORS['text_hint']}; padding-left: {SIZES['spacing']['md']}px;")
 
         self.refresh_btn = QLabel("🔄")
-        self.refresh_btn.setFont(QFont(FONT_FAMILY, 12))
-        self.refresh_btn.setStyleSheet("color: #AAAAAA; padding-right: 8px; cursor: pointer;")
+        self.refresh_btn.setFont(QFont(*get_font("md")))
+        self.refresh_btn.setStyleSheet(f"color: {COLORS['text_hint']}; padding-right: {SIZES['spacing']['md']}px; cursor: pointer;")
         self.refresh_btn.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         title_layout = QHBoxLayout()
@@ -38,60 +39,32 @@ class LeftSideBar(QFrame):
         title_layout.addWidget(self.refresh_btn)
 
         self.camera_list = QListWidget()
-        self.camera_list.setStyleSheet("""
-            QListWidget {
-                background-color: transparent;
-                border: none;
-            }
-            QListWidget::item {
-                height: 70px;
-                margin: 4px 0;
-            }
-            QListWidget::item:selected {
-                background-color: #2D2D5A;
-                border-left: 4px solid #7A5CFF;
-                border-radius: 4px;
-            }
-        """)
+        self.camera_list.setStyleSheet(get_style("list_widget"))
         self.camera_list.itemClicked.connect(self.on_camera_clicked)
         layout.addLayout(title_layout)
         layout.addWidget(self.camera_list)
 
         face_title = QLabel("当前人脸")
-        face_title.setFont(QFont(FONT_FAMILY, 12))
-        face_title.setStyleSheet("color: #AAAAAA; padding-left: 8px;")
+        face_title.setFont(QFont(*get_font("md")))
+        face_title.setStyleSheet(f"color: {COLORS['text_hint']}; padding-left: {SIZES['spacing']['md']}px;")
         self.face_list = QListWidget()
-        self.face_list.setStyleSheet("""
-            QListWidget {
-                background-color: transparent;
-                border: none;
-            }
-            QListWidget::item {
-                height: 70px;
-                margin: 4px 0;
-            }
-            QListWidget::item:selected {
-                background-color: #2D2D5A;
-                border-left: 4px solid #7A5CFF;
-                border-radius: 4px;
-            }
-        """)
+        self.face_list.setStyleSheet(get_style("list_widget"))
         face_data = {"name": "人脸id", "no": "NO.009", "avatar": "👤", "warn": True}
         item = QListWidgetItem()
         item_widget = QWidget()
         item_layout = QHBoxLayout(item_widget)
-        item_layout.setContentsMargins(12, 8, 12, 8)
+        item_layout.setContentsMargins(get_spacing("lg"), get_spacing("sm"), get_spacing("lg"), get_spacing("sm"))
         avatar_label = QLabel(face_data["avatar"])
-        avatar_label.setFont(QFont(FONT_FAMILY, 22))
+        avatar_label.setFont(QFont(*get_font("xxl")))
         name_label = QLabel(face_data["name"])
-        name_label.setFont(QFont(FONT_FAMILY, 12, QFont.Medium))
-        name_label.setStyleSheet("color: #FFFFFF;")
+        name_label.setFont(QFont(*get_font("md", "medium")))
+        name_label.setStyleSheet(f"color: {COLORS['text']};")
         no_label = QLabel(face_data["no"])
-        no_label.setFont(QFont(FONT_FAMILY, 10))
-        no_label.setStyleSheet("color: #AAAAAA;")
+        no_label.setFont(QFont(*get_font("sm")))
+        no_label.setStyleSheet(f"color: {COLORS['text_hint']};")
         warn_label = QLabel("🚨")
         arrow_label = QLabel(">")
-        arrow_label.setStyleSheet("color: #AAAAAA;")
+        arrow_label.setStyleSheet(f"color: {COLORS['text_hint']};")
         item_layout.addWidget(avatar_label)
         item_layout.addWidget(name_label)
         item_layout.addStretch()
@@ -110,7 +83,7 @@ class LeftSideBar(QFrame):
         bottom_status = QHBoxLayout()
         self.check_label = QLabel("✅")
         self.status_text_label = QLabel("可视化显示")
-        self.status_text_label.setStyleSheet("color: #AAAAAA; font-size: 12px;")
+        self.status_text_label.setStyleSheet(f"color: {COLORS['text_hint']}; font-size: {FONTS['size']['md']}px;")
         bottom_status.addWidget(self.check_label)
         bottom_status.addWidget(self.status_text_label)
         bottom_status.addStretch()
@@ -130,18 +103,18 @@ class LeftSideBar(QFrame):
             item = QListWidgetItem()
             item_widget = QWidget()
             item_layout = QHBoxLayout(item_widget)
-            item_layout.setContentsMargins(12, 8, 12, 8)
+            item_layout.setContentsMargins(get_spacing("lg"), get_spacing("sm"), get_spacing("lg"), get_spacing("sm"))
 
             avatar_label = QLabel("📷")
-            avatar_label.setFont(QFont(FONT_FAMILY, 22))
+            avatar_label.setFont(QFont(*get_font("xxl")))
             name_label = QLabel(camera.device_name)
-            name_label.setFont(QFont(FONT_FAMILY, 12, QFont.Medium))
-            name_label.setStyleSheet("color: #FFFFFF;")
+            name_label.setFont(QFont(*get_font("md", "medium")))
+            name_label.setStyleSheet(f"color: {COLORS['text']};")
             device_id_label = QLabel(f"ID:{camera.device_id}")
-            device_id_label.setFont(QFont(FONT_FAMILY, 10))
-            device_id_label.setStyleSheet("color: #AAAAAA;")
+            device_id_label.setFont(QFont(*get_font("sm")))
+            device_id_label.setStyleSheet(f"color: {COLORS['text_hint']};")
             arrow_label = QLabel(">")
-            arrow_label.setStyleSheet("color: #AAAAAA;")
+            arrow_label.setStyleSheet(f"color: {COLORS['text_hint']};")
 
             item_layout.addWidget(avatar_label)
             item_layout.addWidget(name_label)

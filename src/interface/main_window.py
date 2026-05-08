@@ -6,8 +6,9 @@ from .top_nav_bar import TopNavBar
 from .left_sidebar import LeftSideBar
 from .video_widget import VideoWidget
 from .right_panel import RightPanel
-from .face_list_widget import FaceListWidget
+from .filter_sidebar import FilterSidebar
 from .data_record_widget import DataRecordWidget
+from .session_detail_widget import SessionDetailWidget
 from .interface_manager import interface_manager
 from .unified_data_manager import unified_data_manager, CameraInfo
 
@@ -71,8 +72,8 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
-        self.stacked_layout = QStackedLayout(central_widget)
-        self.stacked_layout.setContentsMargins(16, 16, 16, 16)
+        self.main_stacked_layout = QStackedLayout(central_widget)
+        self.main_stacked_layout.setContentsMargins(16, 16, 16, 16)
 
         self.top_nav = TopNavBar()
         self.top_nav.setMinimumHeight(TOP_NAV_HEIGHT)
@@ -91,12 +92,14 @@ class MainWindow(QMainWindow):
         self.right_panel.setMinimumWidth(RIGHT_PANEL_WIDTH)
         self.right_panel.setMaximumWidth(RIGHT_PANEL_WIDTH * 2)
 
-        self.face_list_widget = FaceListWidget()
-        self.face_list_widget.setMinimumWidth(280)
-        self.face_list_widget.setMaximumWidth(400)
+        self.filter_sidebar = FilterSidebar()
+        self.filter_sidebar.setMinimumWidth(280)
+        self.filter_sidebar.setMaximumWidth(400)
 
         self.data_record_widget = DataRecordWidget()
         self.data_record_widget.setMinimumWidth(RIGHT_PANEL_WIDTH)
+
+        self.session_detail_widget = SessionDetailWidget()
 
         monitoring_widget = QWidget()
         monitoring_layout = QVBoxLayout(monitoring_widget)
@@ -154,9 +157,18 @@ class MainWindow(QMainWindow):
         query_vertical_splitter = QSplitter(Qt.Vertical)
         query_vertical_splitter.addWidget(self.top_nav_query)
 
+        self.right_stacked_layout = QStackedLayout()
+        self.right_stacked_layout.setContentsMargins(0, 0, 0, 0)
+        self.right_stacked_layout.addWidget(self.data_record_widget)
+        self.right_stacked_layout.addWidget(self.session_detail_widget)
+        self.right_stacked_layout.setCurrentIndex(0)
+
+        right_stacked_widget = QWidget()
+        right_stacked_widget.setLayout(self.right_stacked_layout)
+
         query_horizontal_splitter = QSplitter(Qt.Horizontal)
-        query_horizontal_splitter.addWidget(self.face_list_widget)
-        query_horizontal_splitter.addWidget(self.data_record_widget)
+        query_horizontal_splitter.addWidget(self.filter_sidebar)
+        query_horizontal_splitter.addWidget(right_stacked_widget)
         query_horizontal_splitter.setStretchFactor(1, 2)
         query_horizontal_splitter.setHandleWidth(8)
         query_horizontal_splitter.setChildrenCollapsible(False)
@@ -194,17 +206,19 @@ class MainWindow(QMainWindow):
 
         query_layout.addWidget(query_vertical_splitter)
 
-        self.stacked_layout.addWidget(monitoring_widget)
-        self.stacked_layout.addWidget(query_widget)
-        self.stacked_layout.setCurrentIndex(0)
+        self.main_stacked_layout.addWidget(monitoring_widget)
+        self.main_stacked_layout.addWidget(query_widget)
+        self.main_stacked_layout.setCurrentIndex(0)
 
     def connect_signals(self):
         self.top_nav.mode_changed.connect(self.on_mode_changed)
         self.top_nav_query.mode_changed.connect(self.on_mode_changed)
         self.right_panel.start_analysis.connect(self.on_start_analysis)
         self.right_panel.stop_analysis.connect(self.on_stop_analysis)
-        self.face_list_widget.face_selected.connect(self.on_face_selected)
-        self.data_record_widget.record_deleted.connect(self.on_record_deleted)
+        self.filter_sidebar.filter_applied.connect(self.on_filter_applied)
+        self.filter_sidebar.chart_options_changed.connect(self.on_chart_options_changed)
+        self.data_record_widget.session_selected.connect(self.on_session_clicked)
+        self.session_detail_widget.back_pressed.connect(self.on_back_to_sessions)
         self.left_sidebar.camera_selected.connect(self.on_camera_selected)
 
     def init_data(self):
@@ -221,21 +235,11 @@ class MainWindow(QMainWindow):
         """摄像头列表回调"""
         print(f"[MainWindow] 收到摄像头列表: {len(cameras)} 个摄像头")
         self.left_sidebar.load_cameras(cameras)
-        if cameras:
-            self.current_device_id = cameras[0].device_id
-            print(f"[MainWindow] 默认选中摄像头: device_id={self.current_device_id}")
-
-    def on_camera_selected(self, device_id):
-        """摄像头选择回调"""
-        self.current_device_id = device_id
-        print(f"[MainWindow] 用户选择摄像头: device_id={device_id}")
 
     def on_mode_changed(self, mode):
+        """切换模式回调"""
+        print(f"[MainWindow] 用户选择模式: {mode}")
         self.current_mode = mode
-
-        self.top_nav.set_mode(mode)
-        self.top_nav_query.set_mode(mode)
-
         if mode == "数据查询":
             self.switch_to_query_mode()
         else:
@@ -244,25 +248,92 @@ class MainWindow(QMainWindow):
             result = interface_manager.switch_mode(mode_str)
             print(f"[MainWindow] 切换模式: {mode_str}, 结果: {result}")
 
-    def switch_to_query_mode(self):
-        self.face_list_widget.load_face_ids(self.face_ids)
-        self.stacked_layout.setCurrentIndex(1)
-        self.top_nav.set_mode("数据查询")
-        self.top_nav_query.set_mode("数据查询")
-
     def switch_to_monitoring_mode(self, mode):
-        self.stacked_layout.setCurrentIndex(0)
+        self.main_stacked_layout.setCurrentIndex(0)
         self.top_nav.set_mode(mode)
         self.top_nav_query.set_mode(mode)
 
-    def on_face_selected(self, face_id):
-        self.current_face_id = face_id
-        records = unified_data_manager.generate_records(face_id)
-        print(f"[MainWindow] 获取学生 {face_id} 的记录: {len(records)} 条")
-        self.data_record_widget.load_records(face_id, records)
+    def switch_to_query_mode(self):
+        self.main_stacked_layout.setCurrentIndex(1)
+        self.top_nav.set_mode("数据查询")
+        self.top_nav_query.set_mode("数据查询")
+        self.right_stacked_layout.setCurrentIndex(0)
+        self.filter_sidebar.show_filter_mode()
 
-    def on_record_deleted(self, face_id, record):
-        print(f"[MainWindow] 删除记录: {face_id} - {record.get('session_id')}")
+        filter_params = self.filter_sidebar.get_current_filter()
+        self.apply_filter(filter_params)
+
+    def apply_filter(self, filter_params: dict):
+        """应用筛选条件，查询会话信息表"""
+        print(f"[MainWindow] 应用筛选条件: {filter_params}")
+
+        all_sessions = unified_data_manager.generate_all_sessions()
+
+        filtered_sessions = []
+        for session in all_sessions:
+            session_date = session.get("start_time", "").split(" ")[0]
+            session_mode = session.get("mode", "")
+            session_focus = session.get("avg_focus_score", 0)
+            session_abnormal = session.get("abnormal_event_count", 0)
+
+            if filter_params.get("start_date") and session_date < filter_params["start_date"]:
+                continue
+            if filter_params.get("end_date") and session_date > filter_params["end_date"]:
+                continue
+            if filter_params.get("mode") and session_mode != filter_params["mode"]:
+                continue
+
+            focus_min = filter_params.get("focus_min", 0)
+            focus_max = filter_params.get("focus_max", 100)
+            if session_focus < focus_min or session_focus > focus_max:
+                continue
+
+            abnormal_min = filter_params.get("abnormal_min", 0)
+            abnormal_max = filter_params.get("abnormal_max", 100)
+            if session_abnormal < abnormal_min or session_abnormal > abnormal_max:
+                continue
+
+            filtered_sessions.append(session)
+
+        print(f"[MainWindow] 筛选结果: {len(filtered_sessions)} 条会话记录")
+        self.data_record_widget.load_sessions(filter_params, filtered_sessions)
+
+    def on_filter_applied(self, filter_params):
+        self.apply_filter(filter_params)
+
+    def on_session_clicked(self, session_data):
+        """点击会话记录，进入详情页"""
+        print(f"[MainWindow] 用户点击会话记录")
+
+        session_id = session_data.get("session_id", "")
+        start_time = session_data.get("start_time", "")
+        end_time = session_data.get("end_time", "")
+
+        print(f"[MainWindow] 查询条件:")
+        print(f"  - session_id: {session_id}")
+        print(f"  - start_time: {start_time}")
+        print(f"  - end_time: {end_time}")
+
+        records = unified_data_manager.generate_records_by_session(
+            session_id, start_time, end_time
+        )
+        print(f"[MainWindow] 查询到 {len(records)} 条专注度评分记录")
+
+        chart_options = self.filter_sidebar.get_chart_options()
+        self.session_detail_widget.load_session_detail(session_data, records, chart_options)
+        self.right_stacked_layout.setCurrentIndex(1)
+        self.filter_sidebar.show_chart_mode()
+
+    def on_back_to_sessions(self):
+        """从详情页返回到会话列表"""
+        print(f"[MainWindow] 返回会话列表")
+        self.filter_sidebar.show_filter_mode()
+        self.right_stacked_layout.setCurrentIndex(0)
+
+    def on_chart_options_changed(self, chart_options):
+        """图表选项改变时更新详情页图表"""
+        if self.right_stacked_layout.currentIndex() == 1:
+            self.session_detail_widget.update_chart(chart_options)
 
     def on_start_analysis(self):
         print("[MainWindow] 开始分析")
@@ -280,8 +351,16 @@ class MainWindow(QMainWindow):
 
     def on_stop_analysis(self):
         print("[MainWindow] 停止分析")
-        result = interface_manager.toggle_analysis(start=False)
-        print(f"[MainWindow] 分析停止结果: {result}")
-
-        interface_manager.toggle_capture(device_id=self.current_device_id, start=False)
         self.video_widget.stop_processing()
+
+        result = interface_manager.toggle_capture(device_id=self.current_device_id, start=False)
+        print(f"[MainWindow] 摄像头控制结果: {result}")
+
+        session_result = interface_manager.toggle_analysis(start=False)
+        if session_result and "session_id" in session_result:
+            print(f"[MainWindow] 结束会话成功: {session_result['session_id']}")
+
+    def on_camera_selected(self, device_id: int):
+        """用户选择摄像头"""
+        print(f"[MainWindow] 用户选择摄像头: {device_id}")
+        self.current_device_id = device_id

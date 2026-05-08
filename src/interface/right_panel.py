@@ -5,7 +5,8 @@ from PyQt5.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QProgressBar
 )
 
-from .config import RIGHT_PANEL_WIDTH, FONT_FAMILY
+from .config import RIGHT_PANEL_WIDTH
+from .styles import COLORS, FONTS, SIZES, get_style, get_font, get_spacing
 from .interface_manager import interface_manager, FocusResultData
 from .mock_data_manager import mock_data_manager
 
@@ -18,7 +19,7 @@ class RightPanel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumWidth(RIGHT_PANEL_WIDTH)
-        self.setStyleSheet("background-color: #1A1A3A; border-radius: 8px;")
+        self.setStyleSheet(get_style("frame_sidebar"))
         self.is_running = False
         self.use_simulation = True
         self.init_ui()
@@ -57,20 +58,20 @@ class RightPanel(QFrame):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(20)
+        layout.setContentsMargins(get_spacing("xxl"), get_spacing("xxl"), get_spacing("xxl"), get_spacing("xxl"))
+        layout.setSpacing(get_spacing("xxl"))
 
         title_layout = QHBoxLayout()
         title_label = QLabel("实时评审")
-        title_label.setFont(QFont(FONT_FAMILY, 14, QFont.Bold))
-        title_label.setStyleSheet("color: #FFFFFF;")
+        title_label.setFont(QFont(*get_font("xl", "bold")))
+        title_label.setStyleSheet(f"color: {COLORS['text']};")
         weight_tag = QLabel("标准权重")
-        weight_tag.setStyleSheet("""
-            background-color: #2D2D5A;
-            color: #AAAAAA;
-            font-size: 11px;
-            border-radius: 10px;
-            padding: 2px 8px;
+        weight_tag.setStyleSheet(f"""
+            background-color: {COLORS['card']};
+            color: {COLORS['text_hint']};
+            font-size: {FONTS['size']['xs']}px;
+            border-radius: {SIZES['radius']['lg']}px;
+            padding: {SIZES['spacing']['xs']}px {SIZES['spacing']['lg']}px;
         """)
         title_layout.addWidget(title_label)
         title_layout.addStretch()
@@ -87,11 +88,11 @@ class RightPanel(QFrame):
             item_layout = QVBoxLayout()
             label_layout = QHBoxLayout()
             name_label = QLabel(config["name"])
-            name_label.setFont(QFont(FONT_FAMILY, 12))
-            name_label.setStyleSheet("color: #FFFFFF;")
+            name_label.setFont(QFont(*get_font("md")))
+            name_label.setStyleSheet(f"color: {COLORS['text']};")
             score_label = QLabel(str(config["default"]))
-            score_label.setFont(QFont(FONT_FAMILY, 12, QFont.Bold))
-            score_label.setStyleSheet("color: #FFFFFF;")
+            score_label.setFont(QFont(*get_font("md", "bold")))
+            score_label.setStyleSheet(f"color: {COLORS['text']};")
             label_layout.addWidget(name_label)
             label_layout.addStretch()
             label_layout.addWidget(score_label)
@@ -100,16 +101,7 @@ class RightPanel(QFrame):
             progress_bar.setRange(0, config["max"])
             progress_bar.setValue(config["default"])
             progress_bar.setTextVisible(False)
-            progress_bar.setStyleSheet("""
-                QProgressBar {
-                    background-color: #2D2D5A;
-                    border-radius: 3px;
-                }
-                QProgressBar::chunk {
-                    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7A5CFF, stop:1 #B39DFF);
-                    border-radius: 3px;
-                }
-            """)
+            progress_bar.setStyleSheet(get_style("progress_bar"))
             item_layout.addLayout(label_layout)
             item_layout.addWidget(progress_bar)
             layout.addLayout(item_layout)
@@ -120,29 +112,29 @@ class RightPanel(QFrame):
 
         focus_layout = QVBoxLayout()
         focus_title = QLabel("当前专注度")
-        focus_title.setFont(QFont(FONT_FAMILY, 12))
-        focus_title.setStyleSheet("color: #AAAAAA;")
+        focus_title.setFont(QFont(*get_font("md")))
+        focus_title.setStyleSheet(f"color: {COLORS['text_hint']};")
         focus_title.setAlignment(Qt.AlignCenter)
         self.focus_score_label = QLabel("86.4")
-        self.focus_score_label.setFont(QFont(FONT_FAMILY, 42, QFont.Bold))
-        self.focus_score_label.setStyleSheet("color: #00E0A0;")
+        self.focus_score_label.setFont(QFont(FONTS["family"], 42, FONTS["weight"]["bold"]))
+        self.focus_score_label.setStyleSheet(f"color: {COLORS['focus_high']};")
         self.focus_score_label.setAlignment(Qt.AlignCenter)
         focus_layout.addWidget(focus_title)
         focus_layout.addWidget(self.focus_score_label)
         layout.addLayout(focus_layout)
 
         curve_title = QLabel("专注度曲线")
-        curve_title.setFont(QFont(FONT_FAMILY, 12))
-        curve_title.setStyleSheet("color: #AAAAAA;")
+        curve_title.setFont(QFont(*get_font("md")))
+        curve_title.setStyleSheet(f"color: {COLORS['text_hint']};")
         self.curve_widget = pg.PlotWidget()
         self.curve_widget.setFixedHeight(180)
-        self.curve_widget.setBackground("#0A0A1A")
+        self.curve_widget.setBackground(COLORS["background"])
         self.curve_widget.showGrid(x=False, y=True, alpha=0.3)
         self.curve_widget.setYRange(0, 100)
         self.curve_widget.setMouseEnabled(x=False, y=False)
         self.curve_widget.hideAxis("bottom")
         self.curve_data = [86.4] * 50
-        self.curve_line = self.curve_widget.plot(self.curve_data, pen=pg.mkPen(color="#00E0A0", width=2))
+        self.curve_line = self.curve_widget.plot(self.curve_data, pen=pg.mkPen(color=COLORS["focus_high"], width=2))
         layout.addWidget(curve_title)
         layout.addWidget(self.curve_widget)
 
@@ -150,21 +142,8 @@ class RightPanel(QFrame):
 
         self.control_btn = QPushButton("✅ 启动/完成")
         self.control_btn.setFixedHeight(48)
-        self.control_btn.setFont(QFont(FONT_FAMILY, 13, QFont.Bold))
-        self.control_btn.setStyleSheet("""
-            QPushButton {
-                color: #FFFFFF;
-                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7A5CFF, stop:1 #997AFF);
-                border: none;
-                border-radius: 12px;
-            }
-            QPushButton:hover {
-                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #8A6CFF, stop:1 #A98AFF);
-            }
-            QPushButton:pressed {
-                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #6A4CEE, stop:1 #8A6CEE);
-            }
-        """)
+        self.control_btn.setFont(QFont(*get_font("lg", "bold")))
+        self.control_btn.setStyleSheet(get_style("push_button_gradient"))
         self.control_btn.clicked.connect(self.on_control_click)
         layout.addWidget(self.control_btn)
 

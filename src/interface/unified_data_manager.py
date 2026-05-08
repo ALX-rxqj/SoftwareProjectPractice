@@ -9,6 +9,7 @@
   4. 封装模拟数据生成和真实数据接收逻辑
   5. 符合数据库设计的模拟数据结构
   6. 统一管理摄像头列表
+  7. 整合接口管理器，在 REAL 模式下通过 interface_manager 调用真实数据
 """
 
 from typing import Callable, Optional, Dict, Any, List
@@ -16,6 +17,8 @@ from enum import Enum
 from dataclasses import dataclass
 import random
 import uuid
+
+from .interface_manager import interface_manager
 
 
 class DataSource(Enum):
@@ -80,9 +83,6 @@ class UnifiedDataManager:
         self._focus_result_callback: Optional[Callable[[FocusResultData], None]] = None
         self._camera_list_callback: Optional[Callable[[List[CameraInfo]], None]] = None
 
-        self._preprocessing_callback: Optional[Callable[[str, Dict], Optional[Dict]]] = None
-        self._state_estimation_callback: Optional[Callable[[str, Dict], Optional[Dict]]] = None
-
         self._current_session_id: Optional[str] = None
         self._warn_threshold: float = 60.0
 
@@ -97,6 +97,8 @@ class UnifiedDataManager:
         self._mock_face_ids = [f"STU_2024{i:03d}" for i in range(1, 9)]
         self._mock_records_cache: Dict[str, List[Dict]] = {}
         self._mock_sessions_cache: Dict[str, List[MockSession]] = {}
+
+        self._setup_interface_manager_integration()
 
         self._mock_cameras = [
             CameraInfo(device_id=0, device_name="Integrated Camera"),
@@ -124,6 +126,48 @@ class UnifiedDataManager:
         else:
             raise ValueError(f"无效的数据来源: {name}")
 
+    def _setup_interface_manager_integration(self):
+        """设置与接口管理器的集成，自动注册回调"""
+        interface_manager.register_video_frame_callback(self._on_interface_video_frame)
+        interface_manager.register_focus_result_callback(self._on_interface_focus_result)
+        interface_manager.register_camera_list_callback(self._on_interface_camera_list)
+
+    def _on_interface_video_frame(self, data):
+        """接口管理器视频帧回调 - 转发给注册的回调"""
+        if self._video_frame_callback:
+            video_data = VideoFrameData(
+                frame=data.frame,
+                faces=data.faces,
+                timestamp=data.timestamp
+            )
+            self._video_frame_callback(video_data)
+
+    def _on_interface_focus_result(self, data):
+        """接口管理器专注度结果回调 - 转发给注册的回调"""
+        if self._focus_result_callback:
+            focus_data = FocusResultData(
+                timestamp=data.timestamp,
+                session_id=data.session_id,
+                head_pose_score=data.head_pose_score,
+                behavior_score=data.behavior_score,
+                expression_score=data.expression_score,
+                evidence_score=data.evidence_score,
+                people_score=data.people_score,
+                final_focus_score=data.final_focus_score,
+                is_force_zero=data.is_force_zero,
+                warn_msg=data.warn_msg
+            )
+            self._focus_result_callback(focus_data)
+
+    def _on_interface_camera_list(self, cameras):
+        """接口管理器摄像头列表回调 - 转发给注册的回调"""
+        if self._camera_list_callback:
+            camera_info_list = [
+                CameraInfo(device_id=c.device_id, device_name=c.device_name)
+                for c in cameras
+            ]
+            self._camera_list_callback(camera_info_list)
+
     def register_video_frame_callback(self, callback: Callable[[VideoFrameData], None]):
         """注册视频帧回调"""
         self._video_frame_callback = callback
@@ -135,14 +179,6 @@ class UnifiedDataManager:
     def register_camera_list_callback(self, callback: Callable[[List[CameraInfo]], None]):
         """注册摄像头列表回调"""
         self._camera_list_callback = callback
-
-    def set_preprocessing_callback(self, callback: Callable[[str, Dict], Optional[Dict]]):
-        """设置预处理模块回调"""
-        self._preprocessing_callback = callback
-
-    def set_state_estimation_callback(self, callback: Callable[[str, Dict], Optional[Dict]]):
-        """设置状态估计模块回调"""
-        self._state_estimation_callback = callback
 
     def _generate_mock_scores(self) -> Dict[str, float]:
         """生成模拟评分数据（五个维度）"""
@@ -336,12 +372,14 @@ class UnifiedDataManager:
         }
 
     def generate_face_ids(self) -> List[str]:
-        """生成模拟学生ID列表"""
+        """生成学生ID列表"""
+        if self._data_source == DataSource.REAL:
+            return []
         return self._mock_face_ids.copy()
 
     def generate_records(self, face_id: str, count: Optional[int] = None) -> List[Dict[str, Any]]:
         """
-        生成模拟历史记录（符合专注度评分记录表结构）
+        生成历史记录（符合专注度评分记录表结构）
 
         Args:
             face_id: 学生ID
@@ -361,46 +399,53 @@ class UnifiedDataManager:
                 - final_focus_score: 最终专注度评分
                 - is_force_zero: 是否因累计异常强制置0
         """
+        if self._data_source == DataSource.REAL:
+            return []
+
         if face_id not in self._mock_records_cache or count is not None:
+            sessions = self.generate_sessions(face_id)
+            session_map = {s["session_id"]: s for s in sessions}
+
             records = []
-            record_count = count or random.randint(5, 15)
+            for session in sessions:
+                session_id = session["session_id"]
+                start_time_str = session["start_time"]
+                end_time_str = session["end_time"]
+                date = start_time_str.split(" ")[0]
+                start_time_part = start_time_str.split(" ")[1]
+                end_time_part = end_time_str.split(" ")[1]
 
-            sessions_created = {}
+                start_parts = start_time_part.split(":")
+                start_hour = int(start_parts[0])
+                start_minute = int(start_parts[1])
+                end_parts = end_time_part.split(":")
+                end_hour = int(end_parts[0])
+                end_minute = int(end_parts[1])
+                session_duration = (end_hour - start_hour) * 3600 + (end_minute - start_minute) * 60
 
-            for _ in range(record_count):
-                day = random.randint(20, 29)
-                hour = random.randint(9, 16)
-                minute = random.randint(0, 59)
+                record_count_per_session = random.randint(15, 40)
 
-                date = f"2026-04-{day:02d}"
-                time = f"{hour:02d}:{minute:02d}:00"
+                for i in range(record_count_per_session):
+                    timestamp = (i / record_count_per_session) * session_duration
+                    scores = self._generate_mock_scores()
 
-                session_key = f"{date}_{hour}"
-                if session_key not in sessions_created:
-                    session = self._generate_session(face_id, date, time)
-                    sessions_created[session_key] = session
-                else:
-                    session = sessions_created[session_key]
+                    record = {
+                        "session_id": session_id,
+                        "timestamp": timestamp,
+                        "date": date,
+                        "time": start_time_part,
+                        "head_pose_score": scores.get("head_pose", 85),
+                        "behavior_score": scores.get("behavior", 85),
+                        "expression_score": scores.get("expression", 85),
+                        "evidence_score": scores.get("evidence", 85),
+                        "people_score": scores.get("people", 90),
+                        "final_focus_score": scores.get("final_focus", 85.0),
+                        "is_force_zero": False,
+                        "focus_score": scores.get("final_focus", 85.0),
+                    }
+                    records.append(record)
 
-                scores = self._generate_mock_scores()
-
-                record = {
-                    "session_id": session.session_id,
-                    "timestamp": random.uniform(0, 3600),
-                    "date": date,
-                    "time": time,
-                    "head_pose_score": scores.get("head_pose", 85),
-                    "behavior_score": scores.get("behavior", 85),
-                    "expression_score": scores.get("expression", 85),
-                    "evidence_score": scores.get("evidence", 85),
-                    "people_score": scores.get("people", 90),
-                    "final_focus_score": scores.get("final_focus", 85.0),
-                    "is_force_zero": False,
-                    "focus_score": scores.get("final_focus", 85.0),
-                }
-                records.append(record)
-
-            records.sort(key=lambda x: (x["date"], x["time"]), reverse=True)
+            records.sort(key=lambda x: (x["date"], x["time"], x["timestamp"]), reverse=True)
             self._mock_records_cache[face_id] = records
 
         return self._mock_records_cache.get(face_id, [])
@@ -415,6 +460,9 @@ class UnifiedDataManager:
         Returns:
             list: 会话列表
         """
+        if self._data_source == DataSource.REAL:
+            return []
+
         if face_id not in self._mock_sessions_cache:
             sessions = []
             session_ids = set()
@@ -446,6 +494,90 @@ class UnifiedDataManager:
             for s in self._mock_sessions_cache.get(face_id, [])
         ]
 
+    def generate_all_sessions(self) -> List[Dict[str, Any]]:
+        """
+        生成所有会话列表（不按学生筛选）
+
+        Returns:
+            list: 所有会话列表
+        """
+        if self._data_source == DataSource.REAL:
+            return []
+
+        all_sessions = []
+        for face_id in self._mock_face_ids:
+            sessions = self.generate_sessions(face_id)
+            for session in sessions:
+                session["face_id"] = face_id
+                all_sessions.append(session)
+
+        all_sessions.sort(key=lambda x: x.get("start_time", ""), reverse=True)
+        print(f"[UnifiedDataManager] 获取全部会话记录: {len(all_sessions)} 条")
+        return all_sessions
+
+    def generate_records_by_session(self, session_id: str, start_time: str, end_time: str) -> List[Dict[str, Any]]:
+        """
+        按会话ID和时间范围筛选专注度评分记录
+
+        Args:
+            session_id: 会话ID
+            start_time: 会话开始时间 (格式: "YYYY-MM-DD HH:MM:SS")
+            end_time: 会话结束时间 (格式: "YYYY-MM-DD HH:MM:SS")
+
+        Returns:
+            list: 筛选后的专注度评分记录列表
+        """
+        print(f"[UnifiedDataManager] 查询会话记录: session_id={session_id}, start={start_time}, end={end_time}")
+
+        if self._data_source == DataSource.MOCK:
+            all_records = self.generate_records_for_session(session_id)
+            print(f"[UnifiedDataManager] 筛选结果: {len(all_records)} 条记录")
+            return all_records
+        else:
+            if self._state_estimation_callback:
+                result = self._state_estimation_callback("query_session_records", {
+                    "session_id": session_id,
+                    "start_time": start_time,
+                    "end_time": end_time
+                })
+                if result and "records" in result:
+                    records = result["records"]
+                    return self._filter_records_by_time_range(records, start_time, end_time)
+                return []
+            return []
+
+    def _filter_records_by_time_range(self, records: List[Dict], start_time: str, end_time: str) -> List[Dict]:
+        """根据时间范围筛选记录（用于REAL模式下后端返回数据的二次筛选）"""
+        from datetime import datetime
+        try:
+            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return records
+
+        filtered = []
+        for record in records:
+            timestamp = record.get("timestamp", 0)
+            record_start = start_dt.timestamp()
+            record_end = end_dt.timestamp()
+            if record_start <= timestamp <= record_end:
+                filtered.append(record)
+        return filtered
+
+    def generate_records_for_session(self, session_id: str) -> List[Dict[str, Any]]:
+        """根据 session_id 获取该会话的所有专注度评分记录"""
+        if self._data_source == DataSource.REAL:
+            return []
+
+        all_records = []
+        for face_id in self._mock_face_ids:
+            records = self.generate_records(face_id)
+            for record in records:
+                if record.get("session_id") == session_id:
+                    record["face_id"] = face_id
+                    all_records.append(record)
+        return all_records
+
     def generate_alarm_events(self, session_id: str) -> List[Dict[str, Any]]:
         """
         生成告警事件记录（符合告警事件记录表结构）
@@ -456,6 +588,9 @@ class UnifiedDataManager:
         Returns:
             list: 告警事件列表
         """
+        if self._data_source == DataSource.REAL:
+            return []
+
         alarm_types = [
             {"type": "低分告警", "detail": "专注度低于阈值"},
             {"type": "离席", "detail": "检测到离开座位超过30秒"},
@@ -483,11 +618,8 @@ class UnifiedDataManager:
         action = "启动" if start else "停止"
         print(f"[UnifiedDataManager] {action}视频采集, device_id={device_id}")
 
-        if self._preprocessing_callback:
-            return self._preprocessing_callback("toggle_capture", {
-                "device_id": device_id,
-                "start": start
-            })
+        if self._data_source == DataSource.REAL:
+            return interface_manager.toggle_capture(device_id, start)
 
         return {"success": True, "msg": f"{action}视频采集指令已发送"}
 
@@ -495,6 +627,9 @@ class UnifiedDataManager:
         """启动/停止专注度分析"""
         action = "启动" if start else "停止"
         print(f"[UnifiedDataManager] {action}专注度分析")
+
+        if self._data_source == DataSource.REAL:
+            return interface_manager.toggle_analysis(start)
 
         if start:
             session_id = self._create_session()
@@ -508,28 +643,13 @@ class UnifiedDataManager:
         """创建新会话"""
         self._current_session_id = self._generate_session_id()
         print(f"[UnifiedDataManager] 创建新会话: {self._current_session_id}")
-
-        if self._state_estimation_callback:
-            self._state_estimation_callback("start_session", {
-                "session_id": self._current_session_id
-            })
-
         return self._current_session_id
 
     def _end_session(self, session_id: str) -> Dict[str, Any]:
         """结束会话"""
         print(f"[UnifiedDataManager] 结束会话: {session_id}")
-
-        if self._state_estimation_callback:
-            result = self._state_estimation_callback("stop_session", {
-                "session_id": session_id
-            })
-            if result:
-                return result
-
         if session_id == self._current_session_id:
             self._current_session_id = None
-
         return {"success": True}
 
     def switch_mode(self, mode: str) -> Dict[str, Any]:
@@ -539,8 +659,8 @@ class UnifiedDataManager:
 
         print(f"[UnifiedDataManager] 切换监督模式: {mode}")
 
-        if self._state_estimation_callback:
-            return self._state_estimation_callback("switch_mode", {"mode": mode})
+        if self._data_source == DataSource.REAL:
+            return interface_manager.switch_mode(mode)
 
         return {"success": True}
 
@@ -552,10 +672,17 @@ class UnifiedDataManager:
         self._warn_threshold = threshold
         print(f"[UnifiedDataManager] 更新告警阈值: {threshold}")
 
-        if self._state_estimation_callback:
-            return self._state_estimation_callback("update_threshold", {"threshold": threshold})
+        if self._data_source == DataSource.REAL:
+            return interface_manager.update_warn_threshold(threshold)
 
         return {"success": True}
+
+    def refresh_camera_list(self) -> Dict[str, Any]:
+        """刷新摄像头列表（通过接口管理器）"""
+        print(f"[UnifiedDataManager] 刷新摄像头列表")
+        if self._data_source == DataSource.REAL:
+            return interface_manager.refresh_camera_list()
+        return self.request_camera_list()
 
     def clear_cache(self):
         """清除缓存"""
