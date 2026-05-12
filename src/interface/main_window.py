@@ -2,6 +2,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QStackedLayout, QSplitter
 
 from .config import WINDOW_WIDTH, WINDOW_HEIGHT, TOP_NAV_HEIGHT, LEFT_BAR_WIDTH, RIGHT_PANEL_WIDTH
+from .styles import get_style
 from .top_nav_bar import TopNavBar
 from .left_sidebar import LeftSideBar
 from .video_widget import VideoWidget
@@ -19,7 +20,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("2026网课专注度分析系统")
         self.setMinimumSize(1280, 720)
         self.showMaximized()
-        self.setStyleSheet("background-color: #0F0F25;")
+        self.setStyleSheet(get_style("main_window"))
         self.current_mode = "网课模式"
         self.current_face_id = None
         self.current_device_id = 0
@@ -106,18 +107,7 @@ class MainWindow(QMainWindow):
         horizontal_splitter.setStretchFactor(1, 1)
         horizontal_splitter.setHandleWidth(8)
         horizontal_splitter.setChildrenCollapsible(False)
-        horizontal_splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: #2D2D5A;
-                border-radius: 4px;
-            }
-            QSplitter::handle:hover {
-                background-color: #41418A;
-            }
-            QSplitter::handle:pressed {
-                background-color: #6666CC;
-            }
-        """)
+        horizontal_splitter.setStyleSheet(get_style("splitter"))
         horizontal_splitter.setSizes([LEFT_BAR_WIDTH, 560, RIGHT_PANEL_WIDTH])
 
         vertical_splitter = QSplitter(Qt.Vertical)
@@ -126,18 +116,7 @@ class MainWindow(QMainWindow):
         vertical_splitter.setStretchFactor(1, 1)
         vertical_splitter.setHandleWidth(8)
         vertical_splitter.setChildrenCollapsible(False)
-        vertical_splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: #2D2D5A;
-                border-radius: 4px;
-            }
-            QSplitter::handle:hover {
-                background-color: #41418A;
-            }
-            QSplitter::handle:pressed {
-                background-color: #6666CC;
-            }
-        """)
+        vertical_splitter.setStyleSheet(get_style("splitter"))
         vertical_splitter.setSizes([TOP_NAV_HEIGHT, 550])
 
         monitoring_layout.addWidget(vertical_splitter)
@@ -165,36 +144,14 @@ class MainWindow(QMainWindow):
         query_horizontal_splitter.setStretchFactor(1, 2)
         query_horizontal_splitter.setHandleWidth(8)
         query_horizontal_splitter.setChildrenCollapsible(False)
-        query_horizontal_splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: #2D2D5A;
-                border-radius: 4px;
-            }
-            QSplitter::handle:hover {
-                background-color: #41418A;
-            }
-            QSplitter::handle:pressed {
-                background-color: #6666CC;
-            }
-        """)
+        query_horizontal_splitter.setStyleSheet(get_style("splitter"))
         query_horizontal_splitter.setSizes([280, 800])
 
         query_vertical_splitter.addWidget(query_horizontal_splitter)
         query_vertical_splitter.setStretchFactor(1, 1)
         query_vertical_splitter.setHandleWidth(8)
         query_vertical_splitter.setChildrenCollapsible(False)
-        query_vertical_splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: #2D2D5A;
-                border-radius: 4px;
-            }
-            QSplitter::handle:hover {
-                background-color: #41418A;
-            }
-            QSplitter::handle:pressed {
-                background-color: #6666CC;
-            }
-        """)
+        query_vertical_splitter.setStyleSheet(get_style("splitter"))
         query_vertical_splitter.setSizes([TOP_NAV_HEIGHT, 550])
 
         query_layout.addWidget(query_vertical_splitter)

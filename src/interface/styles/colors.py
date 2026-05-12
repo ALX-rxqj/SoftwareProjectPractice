@@ -20,6 +20,9 @@ COLORS = {
     
     "border": "#353560",
     "border_light": "#454580",
+
+    "handle_hover": "#41418A",
+    "handle_pressed": "#6666CC",
     
     "focus_high": "#00E080",
     "focus_medium": "#FFB84D",

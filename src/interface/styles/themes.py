@@ -213,7 +213,22 @@ def get_style(style_name: str) -> str:
         
         "plot_widget": f"""
             background-color: {COLORS['background']};
-        """
+        """,
+
+        "main_window": f"background-color: {COLORS['background']};",
+
+        "splitter": f"""
+            QSplitter::handle {{
+                background-color: {COLORS['card_hover']};
+                border-radius: {SIZES['radius']['sm']}px;
+            }}
+            QSplitter::handle:hover {{
+                background-color: {COLORS['handle_hover']};
+            }}
+            QSplitter::handle:pressed {{
+                background-color: {COLORS['handle_pressed']};
+            }}
+        """,
     }
     return styles.get(style_name, "")
 
