@@ -245,11 +245,17 @@ class InterfaceManager:
         self._is_analysis_running = start
 
         if start:
+            if self._state_estimation_callback:
+                result = self._state_estimation_callback("toggle_analysis", {"start": True})
+                if result and "session_id" in result:
+                    self._current_session_id = result["session_id"]
+                    return {"session_id": self._current_session_id}
             session_id = self.start_new_session()
-            self._is_analysis_running = True
             return {"session_id": session_id}
         else:
-            if self._current_session_id:
+            if self._state_estimation_callback:
+                self._state_estimation_callback("toggle_analysis", {"start": False})
+            elif self._current_session_id:
                 self.stop_session(self._current_session_id)
             self._is_analysis_running = False
             return {"success": True}

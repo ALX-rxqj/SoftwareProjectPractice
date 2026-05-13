@@ -32,24 +32,6 @@ class MainWindow(QMainWindow):
     def _setup_interface_manager(self):
         """配置接口管理器，连接预处理模块和状态估计模块"""
 
-        def state_estimation_handler(command: str, params: dict):
-            print(f"[MainWindow] 状态估计指令: {command}, params: {params}")
-            if command == "start_session":
-                print(f"[MainWindow] -> 创建会话: {params.get('session_id')}")
-                return {"success": True}
-            elif command == "stop_session":
-                print(f"[MainWindow] -> 结束会话: {params.get('session_id')}")
-                return {"success": True}
-            elif command == "switch_mode":
-                print(f"[MainWindow] -> 切换模式: {params.get('mode')}")
-                return {"success": True}
-            elif command == "update_threshold":
-                print(f"[MainWindow] -> 更新阈值: {params.get('threshold')}")
-                return {"success": True}
-            return None
-
-        interface_manager.set_state_estimation_callback(state_estimation_handler)
-
         if unified_data_manager.initialize_real_backend():
             print("[MainWindow] 已连接真实预处理后端")
         else:
@@ -57,6 +39,16 @@ class MainWindow(QMainWindow):
             interface_manager.set_preprocessing_callback(
                 lambda cmd, params: print(
                     f"[MainWindow] 预处理指令(MOCK): {cmd}, params: {params}"
+                ) or {"success": True, "msg": "mock"}
+            )
+
+        if unified_data_manager.initialize_state_estimation_backend():
+            print("[MainWindow] 已连接真实状态估计后端")
+        else:
+            print("[MainWindow] 使用模拟数据模式（状态估计模块不可用）")
+            interface_manager.set_state_estimation_callback(
+                lambda cmd, params: print(
+                    f"[MainWindow] 状态估计指令(MOCK): {cmd}, params: {params}"
                 ) or {"success": True, "msg": "mock"}
             )
 

@@ -78,6 +78,7 @@ class UnifiedDataManager:
         self._warn_threshold: float = 60.0
 
         self._preprocessing_service = None
+        self._state_estimation_service = None
 
         self._setup_interface_manager_integration()
 
@@ -486,9 +487,60 @@ class UnifiedDataManager:
     def preprocessing_service(self):
         return self._preprocessing_service
 
+    @property
+    def state_estimation_service(self):
+        return self._state_estimation_service
+
+    def initialize_state_estimation_backend(self) -> bool:
+        """初始化真实状态估计后端，将 StateEstimationService 接入 interface_manager。
+
+        Returns:
+            True 表示初始化成功
+        """
+        try:
+            from ..state_estimation.service import StateEstimationService
+
+            service = StateEstimationService()
+            service.set_log_callback(lambda msg: print(msg))
+
+            # 桥接：contracts.FocusResultData → dict → interface_manager
+            service.set_focus_result_callback(
+                lambda result: interface_manager.on_focus_result_received(
+                    result.to_dict()
+                )
+            )
+
+            adapter = StateEstimationCommandAdapter(service)
+            interface_manager.set_state_estimation_callback(adapter)
+
+            self._state_estimation_service = service
+            self._state_estimation_source = DataSource.REAL
+
+            print("[UnifiedDataManager] 真实状态估计后端已初始化")
+            return True
+        except ImportError as e:
+            print(f"[UnifiedDataManager] 状态估计模块导入失败（可能缺少依赖）: {e}")
+            return False
+        except Exception as e:
+            print(f"[UnifiedDataManager] 状态估计模块初始化失败: {e}")
+            return False
+
     def clear_cache(self):
         mock_data_manager.clear_cache()
         print("[UnifiedDataManager] 缓存已清除")
+
+
+class StateEstimationCommandAdapter:
+    """将 StateEstimationService 适配为 InterfaceManager 所需的回调格式
+
+    镜像 PreprocessingCommandAdapter 的设计模式。
+    """
+
+    def __init__(self, service):
+        self.service = service
+
+    def __call__(self, command: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        return self.service.handle_command(command, params)
 
 
 unified_data_manager = UnifiedDataManager()

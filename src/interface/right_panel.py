@@ -21,7 +21,6 @@ class RightPanel(QFrame):
         self.setMinimumWidth(RIGHT_PANEL_WIDTH)
         self.setStyleSheet(get_style("frame_sidebar"))
         self.is_running = False
-        self.use_simulation = True
         self.init_ui()
         self.score_updated.connect(self.update_scores)
         self._register_interface_callback()
@@ -39,9 +38,6 @@ class RightPanel(QFrame):
         SEI-01: 接收状态估计模块发送的专注度评分结果
         用于更新UI显示
         """
-        if self.use_simulation:
-            return
-
         score_dict = {
             "head_pose": data.head_pose_score,
             "behavior": data.behavior_score,
@@ -80,9 +76,11 @@ class RightPanel(QFrame):
 
         self.score_items = {}
         score_config = [
-            {"key": "expression", "name": "表情 (40%)", "max": 100, "default": 85},
-            {"key": "behavior", "name": "行为 (40%)", "max": 100, "default": 92},
-            {"key": "background", "name": "背景 (20%)", "max": 100, "default": 78},
+            {"key": "head_pose", "name": "头部姿态", "max": 100, "default": 0},
+            {"key": "behavior", "name": "行为", "max": 100, "default": 0},
+            {"key": "expression", "name": "表情", "max": 100, "default": 0},
+            {"key": "evidence", "name": "证据", "max": 100, "default": 0},
+            {"key": "people", "name": "人数", "max": 100, "default": 0},
         ]
         for config in score_config:
             item_layout = QVBoxLayout()
@@ -115,7 +113,7 @@ class RightPanel(QFrame):
         focus_title.setFont(QFont(*get_font("md")))
         focus_title.setStyleSheet(f"color: {COLORS['text_hint']};")
         focus_title.setAlignment(Qt.AlignCenter)
-        self.focus_score_label = QLabel("86.4")
+        self.focus_score_label = QLabel("0.0")
         self.focus_score_label.setFont(QFont(FONTS["family"], 42, FONTS["weight"]["bold"]))
         self.focus_score_label.setStyleSheet(f"color: {COLORS['focus_high']};")
         self.focus_score_label.setAlignment(Qt.AlignCenter)
@@ -133,7 +131,7 @@ class RightPanel(QFrame):
         self.curve_widget.setYRange(0, 100)
         self.curve_widget.setMouseEnabled(x=False, y=False)
         self.curve_widget.hideAxis("bottom")
-        self.curve_data = [86.4] * 50
+        self.curve_data = [0.0] * 50
         self.curve_line = self.curve_widget.plot(self.curve_data, pen=pg.mkPen(color=COLORS["focus_high"], width=2))
         layout.addWidget(curve_title)
         layout.addWidget(self.curve_widget)
@@ -148,18 +146,26 @@ class RightPanel(QFrame):
         layout.addWidget(self.control_btn)
 
     def update_scores(self, score_dict):
-        if "expression" in score_dict:
-            val = score_dict["expression"]
-            self.score_items["expression"]["label"].setText(str(val))
-            self.score_items["expression"]["progress"].setValue(val)
+        if "head_pose" in score_dict:
+            val = score_dict["head_pose"]
+            self.score_items["head_pose"]["label"].setText(str(val))
+            self.score_items["head_pose"]["progress"].setValue(int(val))
         if "behavior" in score_dict:
             val = score_dict["behavior"]
             self.score_items["behavior"]["label"].setText(str(val))
-            self.score_items["behavior"]["progress"].setValue(val)
-        if "background" in score_dict:
-            val = score_dict["background"]
-            self.score_items["background"]["label"].setText(str(val))
-            self.score_items["background"]["progress"].setValue(val)
+            self.score_items["behavior"]["progress"].setValue(int(val))
+        if "expression" in score_dict:
+            val = score_dict["expression"]
+            self.score_items["expression"]["label"].setText(str(val))
+            self.score_items["expression"]["progress"].setValue(int(val))
+        if "evidence" in score_dict:
+            val = score_dict["evidence"]
+            self.score_items["evidence"]["label"].setText(str(val))
+            self.score_items["evidence"]["progress"].setValue(int(val))
+        if "people" in score_dict:
+            val = score_dict["people"]
+            self.score_items["people"]["label"].setText(str(val))
+            self.score_items["people"]["progress"].setValue(int(val))
         if "final_focus" in score_dict:
             val = score_dict["final_focus"]
             self.focus_score_label.setText(f"{val:.1f}")
