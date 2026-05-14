@@ -2,14 +2,15 @@ import pyqtgraph as pg
 
 from .styles import COLORS, FONTS, SIZES
 
-
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 720
 LEFT_BAR_WIDTH = SIZES["sidebar"]["width"]
 RIGHT_PANEL_WIDTH = 400
 TOP_NAV_HEIGHT = SIZES["toolbar"]["height"]
 
-pg.setConfigOption('foreground', 'w')
+pg.setConfigOption("foreground", COLORS["text_secondary"])
+pg.setConfigOption("background", COLORS["background"])
+
 FONT_FAMILY = FONTS["family"]
 FONT_SIZE_SMALL = FONTS["size"]["sm"]
 FONT_SIZE_NORMAL = FONTS["size"]["base"]

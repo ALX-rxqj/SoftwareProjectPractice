@@ -1,9 +1,12 @@
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import pyqtSignal, Qt
 from PyQt5.QtGui import QFont
-from PyQt5.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QButtonGroup, QVBoxLayout
+from PyQt5.QtWidgets import (
+    QFrame, QHBoxLayout, QLabel, QPushButton, QButtonGroup, QVBoxLayout,
+    QSizePolicy,
+)
 
 from .config import TOP_NAV_HEIGHT
-from .styles import COLORS, FONTS, SIZES, get_style, get_font, get_spacing
+from .styles import COLORS, FONTS, get_style, get_font, get_spacing
 
 
 class TopNavBar(QFrame):
@@ -12,57 +15,80 @@ class TopNavBar(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumHeight(TOP_NAV_HEIGHT)
-        self.setStyleSheet(get_style("frame_sidebar"))
+        self.setStyleSheet(get_style("nav_bar_gradient"))
         self._current_mode = "网课模式"
         self.init_ui()
 
     def init_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(get_spacing("xxl"), get_spacing("base"), get_spacing("xxl"), get_spacing("base"))
+        layout.setContentsMargins(
+            get_spacing("xxl"), get_spacing("base"),
+            get_spacing("xxl"), get_spacing("base"),
+        )
         layout.setSpacing(get_spacing("xxl"))
 
-        logo_label = QLabel("📌")
-        logo_label.setFont(QFont(*get_font("xxl")))
+        # ---- Logo: 渐变色圆点 ----
+        logo_dot = QFrame()
+        logo_dot.setFixedSize(36, 36)
+        logo_dot.setStyleSheet(
+            get_style("avatar_gradient") + f"border-radius: 18px;"
+        )
+
+        # ---- 标题区域 ----
         title_layout = QVBoxLayout()
-        title_label = QLabel("2026网课专注度分析系统")
-        title_label.setFont(QFont(*get_font("xl", "bold")))
+        title_layout.setSpacing(2)
+        title_label = QLabel('<span style="color:#7A5CFF;">网课</span>专注度分析系统')
+        title_label.setFont(QFont(*get_font("title", "extrabold", "display")))
         title_label.setStyleSheet(f"color: {COLORS['text']};")
+        title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
         self.sub_title = QLabel("网课模式")
-        self.sub_title.setFont(QFont(*get_font("sm")))
-        self.sub_title.setStyleSheet(f"color: {COLORS['text_hint']};")
+        self.sub_title.setFont(QFont(*get_font("sm", "normal", "ui")))
+        self.sub_title.setStyleSheet(get_style("label_secondary"))
         title_layout.addWidget(title_label)
         title_layout.addWidget(self.sub_title)
-        layout.addWidget(logo_label)
+
+        layout.addWidget(logo_dot)
+        layout.addSpacing(get_spacing("md"))
         layout.addLayout(title_layout)
         layout.addStretch()
 
+        # ---- 模式按钮组 ----
         self.mode_group = QButtonGroup(self)
         self.mode_group.setExclusive(True)
         mode_names = ["网课模式", "考试模式", "数据查询"]
         for idx, name in enumerate(mode_names):
             btn = QPushButton(name)
-            btn.setFixedSize(160, 36)
-            btn.setFont(QFont(*get_font("md")))
+            btn.setFixedSize(140, 34)
+            btn.setFont(QFont(*get_font("base", "medium", "ui")))
             btn.setCheckable(True)
-            btn.setStyleSheet(get_style("mode_button"))
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(get_style("mode_button_enhanced"))
             self.mode_group.addButton(btn, idx)
             layout.addWidget(btn)
         self.mode_group.button(0).setChecked(True)
         self.mode_group.buttonClicked.connect(self.on_mode_click)
         layout.addStretch()
 
-        self.record_layout = QHBoxLayout()
-        self.record_dot = QLabel("●")
-        self.record_dot.setStyleSheet(f"color: {COLORS['focus_high']}; font-size: {FONTS['size']['md']}px;")
-        self.record_label = QLabel("录制中")
-        self.record_label.setFont(QFont(*get_font("md")))
-        self.record_label.setStyleSheet(f"color: {COLORS['text']};")
-        self.record_layout.addWidget(self.record_dot)
-        self.record_layout.addWidget(self.record_label)
+        # ---- 录制指示器 ----
         self.record_frame = QFrame()
-        self.record_frame.setLayout(self.record_layout)
-        self.record_frame.setStyleSheet(f"background-color: {COLORS['card']}; border-radius: {SIZES['radius']['xl']}px; padding: {SIZES['spacing']['sm']}px {SIZES['spacing']['lg']}px;")
-        self.record_frame.setFixedHeight(30)
+        self.record_frame.setStyleSheet(get_style("badge_danger"))
+        self.record_frame.setFixedHeight(40)
+        self.record_frame.setMinimumWidth(100)
+        record_layout = QHBoxLayout(self.record_frame)
+        record_layout.setContentsMargins(12, 0, 12, 0)
+        record_layout.setSpacing(6)
+
+        self.record_dot = QFrame()
+        self.record_dot.setFixedSize(8, 8)
+        self.record_dot.setStyleSheet(get_style("dot_danger"))
+        self.record_label = QLabel("未录制")
+        self.record_label.setFont(QFont(*get_font("sm", "normal", "ui")))
+        self.record_label.setStyleSheet(
+            f"color: {COLORS['danger']}; background: transparent;"
+        )
+        record_layout.addWidget(self.record_dot)
+        record_layout.addWidget(self.record_label)
         layout.addWidget(self.record_frame)
 
     def on_mode_click(self, btn):
@@ -78,20 +104,38 @@ class TopNavBar(QFrame):
                 break
         self.sub_title.setText(mode)
         if mode == "数据查询":
-            self.record_frame.hide()
+            self.record_dot.setStyleSheet(get_style("dot_hint"))
+            self.record_label.setText("数据表")
+            self.record_label.setStyleSheet(
+                f"color: {COLORS['text_hint']}; background: transparent;"
+            )
+            self.record_frame.setStyleSheet(get_style("badge"))
         else:
-            self.record_frame.show()
+            self.record_dot.setStyleSheet(get_style("dot_danger"))
+            self.record_label.setText("未录制")
+            self.record_label.setStyleSheet(
+                f"color: {COLORS['danger']}; background: transparent;"
+            )
+            self.record_frame.setStyleSheet(get_style("badge_danger"))
 
     def get_mode(self):
         return self._current_mode
 
     def set_recording(self, is_recording):
         if is_recording:
-            self.record_dot.setStyleSheet("color: #FF4444; font-size: 14px;")
+            self.record_dot.setStyleSheet(get_style("dot_danger"))
             self.record_label.setText("录制中")
+            self.record_label.setStyleSheet(
+                f"color: {COLORS['danger']}; background: transparent;"
+            )
+            self.record_frame.setStyleSheet(get_style("badge_danger"))
         else:
-            self.record_dot.setStyleSheet("color: #00E080; font-size: 14px;")
+            self.record_dot.setStyleSheet(get_style("dot_success"))
             self.record_label.setText("未录制")
+            self.record_label.setStyleSheet(
+                f"color: {COLORS['focus_high']}; background: transparent;"
+            )
+            self.record_frame.setStyleSheet(get_style("badge_success"))
 
     def set_mode_buttons_enabled(self, enabled: bool):
         for i in range(self.mode_group.buttons().__len__()):

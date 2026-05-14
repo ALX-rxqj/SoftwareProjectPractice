@@ -2,7 +2,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QStackedLayout, QSplitter
 
 from .config import WINDOW_WIDTH, WINDOW_HEIGHT, TOP_NAV_HEIGHT, LEFT_BAR_WIDTH, RIGHT_PANEL_WIDTH
-from .styles import get_style
+from .styles import get_style, get_spacing
 from .top_nav_bar import TopNavBar
 from .left_sidebar import LeftSideBar
 from .video_widget import VideoWidget
@@ -17,7 +17,7 @@ from .unified_data_manager import unified_data_manager, CameraInfo
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("2026网课专注度分析系统")
+        self.setWindowTitle("网课专注度分析系统")
         self.setMinimumSize(1280, 720)
         self.showMaximized()
         self.setStyleSheet(get_style("main_window"))
@@ -59,7 +59,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
 
         self.main_stacked_layout = QStackedLayout(central_widget)
-        self.main_stacked_layout.setContentsMargins(16, 16, 16, 16)
+        self.main_stacked_layout.setContentsMargins(
+            get_spacing("base"), get_spacing("lg"),
+            get_spacing("base"), get_spacing("lg"),
+        )
 
         self.top_nav = TopNavBar()
         self.top_nav.setMinimumHeight(TOP_NAV_HEIGHT)
@@ -90,14 +93,14 @@ class MainWindow(QMainWindow):
         monitoring_widget = QWidget()
         monitoring_layout = QVBoxLayout(monitoring_widget)
         monitoring_layout.setContentsMargins(0, 0, 0, 0)
-        monitoring_layout.setSpacing(16)
+        monitoring_layout.setSpacing(get_spacing("lg"))
 
         horizontal_splitter = QSplitter(Qt.Horizontal)
         horizontal_splitter.addWidget(self.left_sidebar)
         horizontal_splitter.addWidget(self.video_widget)
         horizontal_splitter.addWidget(self.right_panel)
         horizontal_splitter.setStretchFactor(1, 1)
-        horizontal_splitter.setHandleWidth(8)
+        horizontal_splitter.setHandleWidth(6)
         horizontal_splitter.setChildrenCollapsible(False)
         horizontal_splitter.setStyleSheet(get_style("splitter"))
         horizontal_splitter.setSizes([LEFT_BAR_WIDTH, 560, RIGHT_PANEL_WIDTH])
@@ -116,7 +119,7 @@ class MainWindow(QMainWindow):
         query_widget = QWidget()
         query_layout = QVBoxLayout(query_widget)
         query_layout.setContentsMargins(0, 0, 0, 0)
-        query_layout.setSpacing(16)
+        query_layout.setSpacing(get_spacing("lg"))
 
         query_vertical_splitter = QSplitter(Qt.Vertical)
         query_vertical_splitter.addWidget(self.top_nav_query)
@@ -134,14 +137,14 @@ class MainWindow(QMainWindow):
         query_horizontal_splitter.addWidget(self.filter_sidebar)
         query_horizontal_splitter.addWidget(right_stacked_widget)
         query_horizontal_splitter.setStretchFactor(1, 2)
-        query_horizontal_splitter.setHandleWidth(8)
+        query_horizontal_splitter.setHandleWidth(6)
         query_horizontal_splitter.setChildrenCollapsible(False)
         query_horizontal_splitter.setStyleSheet(get_style("splitter"))
         query_horizontal_splitter.setSizes([280, 800])
 
         query_vertical_splitter.addWidget(query_horizontal_splitter)
         query_vertical_splitter.setStretchFactor(1, 1)
-        query_vertical_splitter.setHandleWidth(8)
+        query_vertical_splitter.setHandleWidth(6)
         query_vertical_splitter.setChildrenCollapsible(False)
         query_vertical_splitter.setStyleSheet(get_style("splitter"))
         query_vertical_splitter.setSizes([TOP_NAV_HEIGHT, 550])
@@ -266,6 +269,8 @@ class MainWindow(QMainWindow):
         interface_manager.switch_mode(mode_str)
 
         self.video_widget.start_processing()
+        self.top_nav.set_recording(True)
+        self.top_nav_query.set_recording(True)
         self.top_nav.set_mode_buttons_enabled(False)
         self.top_nav_query.set_mode_buttons_enabled(False)
 
@@ -280,6 +285,8 @@ class MainWindow(QMainWindow):
         if session_result and "session_id" in session_result:
             print(f"[MainWindow] 结束会话成功: {session_result['session_id']}")
 
+        self.top_nav.set_recording(False)
+        self.top_nav_query.set_recording(False)
         self.top_nav.set_mode_buttons_enabled(True)
         self.top_nav_query.set_mode_buttons_enabled(True)
 
