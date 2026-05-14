@@ -3,7 +3,7 @@ from PyQt5.QtGui import QPixmap, QImage, QFont
 from PyQt5.QtWidgets import QFrame, QVBoxLayout, QLabel, QHBoxLayout
 
 from .interface_manager import interface_manager, VideoFrameData
-from .styles import COLORS, FONTS, get_style, get_font, get_spacing
+from .styles import COLORS, FONTS, SIZES, get_style, get_font, get_spacing
 from .styles.effects import create_card_shadow
 
 
