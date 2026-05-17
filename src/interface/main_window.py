@@ -12,6 +12,7 @@ from .data_record_widget import DataRecordWidget
 from .session_detail_widget import SessionDetailWidget
 from .interface_manager import interface_manager
 from .unified_data_manager import unified_data_manager, CameraInfo
+from .face_registration_dialog import FaceRegistrationDialog
 
 
 class MainWindow(QMainWindow):
@@ -167,6 +168,8 @@ class MainWindow(QMainWindow):
         self.left_sidebar.camera_selected.connect(self.on_camera_selected)
         self.left_sidebar.refresh_requested.connect(self.on_refresh_camera_list)
         self.video_widget.frame_updated.connect(self.on_video_frame_updated)
+        self.top_nav.register_face_clicked.connect(self.on_register_face_clicked)
+        self.top_nav_query.register_face_clicked.connect(self.on_register_face_clicked)
 
     def init_data(self):
         """通过统一数据管理器获取初始数据（各模块独立数据源）"""
@@ -305,3 +308,34 @@ class MainWindow(QMainWindow):
         faces = frame_data.get("faces", [])
         if faces:
             self.left_sidebar.update_faces(faces)
+
+    def on_register_face_clicked(self):
+        """注册人脸按钮点击"""
+        if interface_manager.is_capture_running:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "提示",
+                '正在分析中，请先点击"停止分析"后再注册人脸。'
+            )
+            return
+
+        print("[MainWindow] 打开人脸注册弹窗")
+        dialog = FaceRegistrationDialog(
+            device_id=self.current_device_id, parent=self
+        )
+        dialog.registration_completed.connect(self.on_face_registration_completed)
+        dialog.show()
+
+    def on_face_registration_completed(self, data: dict):
+        """人脸注册完成回调"""
+        name = data.get("student_name", "")
+        frames = data.get("frames", [])
+        storage_type = data.get("storage_type", "temp")
+
+        print(
+            f"[MainWindow] 人脸注册完成: name={name}, "
+            f"frames={len(frames)}, storage={storage_type}"
+        )
+
+        result = interface_manager.register_face(name, frames, storage_type)
+        print(f"[MainWindow] register_face 结果: {result}")

@@ -11,6 +11,7 @@ from .styles import COLORS, FONTS, get_style, get_font, get_spacing
 
 class TopNavBar(QFrame):
     mode_changed = pyqtSignal(str)
+    register_face_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -90,6 +91,15 @@ class TopNavBar(QFrame):
         record_layout.addWidget(self.record_dot)
         record_layout.addWidget(self.record_label)
         layout.addWidget(self.record_frame)
+
+        # ---- 注册人脸按钮 ----
+        self.btn_register_face = QPushButton("注册人脸")
+        self.btn_register_face.setFixedSize(90, 40)
+        self.btn_register_face.setFont(QFont(*get_font("sm", "bold", "ui")))
+        self.btn_register_face.setCursor(Qt.PointingHandCursor)
+        self.btn_register_face.setStyleSheet(get_style("register_face_button"))
+        self.btn_register_face.clicked.connect(self.register_face_clicked.emit)
+        layout.addWidget(self.btn_register_face)
 
     def on_mode_click(self, btn):
         self._current_mode = btn.text()

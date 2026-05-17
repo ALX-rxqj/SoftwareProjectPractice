@@ -75,6 +75,7 @@ class InterfaceManager:
         self._video_frame_callback: Optional[Callable] = None
         self._focus_result_callback: Optional[Callable] = None
         self._camera_list_callback: Optional[Callable] = None
+        self._face_registration_frame_callback: Optional[Callable] = None
 
         self._preprocessing_callback: Optional[Callable] = None
         self._state_estimation_callback: Optional[Callable] = None
@@ -99,6 +100,14 @@ class InterfaceManager:
         """注册摄像头列表回调 - PRI-03"""
         self._camera_list_callback = callback
 
+    def register_face_registration_frame_callback(self, callback: Callable[[Any, list, float], None]):
+        """注册人脸注册专用帧回调"""
+        self._face_registration_frame_callback = callback
+
+    def clear_face_registration_frame_callback(self):
+        """清除人脸注册专用帧回调"""
+        self._face_registration_frame_callback = None
+
     def on_video_frame_received(self, frame: Any, faces: list, timestamp: float):
         """
         PRI-01: 接收预处理模块发送的视频帧数据
@@ -109,6 +118,8 @@ class InterfaceManager:
             faces: list of {face_id:int, bbox:[x,y,w,h]}
             timestamp: float
         """
+        if self._face_registration_frame_callback:
+            self._face_registration_frame_callback(frame, faces, timestamp)
         if self._video_frame_callback:
             data = VideoFrameData(frame=frame, faces=faces, timestamp=timestamp)
             self._video_frame_callback(data)
@@ -199,11 +210,16 @@ class InterfaceManager:
             self._current_device_id = device_id
 
         if self._preprocessing_callback:
-            return self._preprocessing_callback("toggle_capture", {
+            result = self._preprocessing_callback("toggle_capture", {
                 "device_id": device_id,
                 "start": start
             })
+            if not start:
+                self.clear_face_registration_frame_callback()
+            return result
 
+        if not start:
+            self.clear_face_registration_frame_callback()
         return {"success": True, "msg": f"{action}视频采集指令已发送"}
 
     def load_video_file(self, file_path: str) -> Dict[str, Any]:
@@ -355,6 +371,37 @@ class InterfaceManager:
             })
 
         return {"success": True}
+
+    def register_face(self, name: str, frames: list, storage_type: str) -> Dict[str, Any]:
+        """
+        指令：注册人脸
+        路由：直接至预处理模块
+
+        Args:
+            name: str - 学生姓名
+            frames: List[np.ndarray] - 采集的人脸帧列表（原始BGR帧）
+            storage_type: str - "local"（本地持久）或 "temp"（会话临时）
+
+        Returns:
+            {success: bool, face_id: str, msg: str}
+        """
+        if storage_type not in ["local", "temp"]:
+            return {"success": False, "msg": f"无效的存储类型: {storage_type}"}
+
+        face_id = f"temp_{name}" if storage_type == "temp" else name
+        print(f"[InterfaceManager] 注册人脸: {name}, storage={storage_type}, "
+              f"frames={len(frames)}, face_id={face_id}")
+
+        if self._preprocessing_callback:
+            return self._preprocessing_callback("register_face", {
+                "student_name": name,
+                "frames": frames,
+                "storage_type": storage_type,
+                "face_id": face_id,
+            })
+
+        return {"success": True, "face_id": face_id,
+                "msg": f"人脸 {face_id} 注册指令已发送（预处理模块未连接）"}
 
     def set_preprocessing_callback(self, callback: Callable[[str, Dict], Optional[Dict]]):
         """设置预处理模块回调（用于指令下发）"""

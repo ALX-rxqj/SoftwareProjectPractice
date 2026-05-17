@@ -215,6 +215,9 @@ __marimo__/
 doc/
 CLAUDE.md
 .claude/
+.agents/
+skills-lock.json
 
 # 模型
 weights/
+
