@@ -33,6 +33,7 @@ class ConnectionManager:
         self._connection = sqlite3.connect(db_path)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA journal_mode=WAL")
+        self._connection.execute("PRAGMA foreign_keys = ON")
         print(f"[ConnectionManager] 已连接数据库: {db_path}")
 
     def get_connection(self) -> sqlite3.Connection:

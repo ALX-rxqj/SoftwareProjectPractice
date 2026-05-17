@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from .interface_manager import interface_manager
 from .mock_data_manager import mock_data_manager
+from ..database.database_service import database_service
 
 
 class DataSource(Enum):
@@ -81,6 +82,24 @@ class UnifiedDataManager:
         self._state_estimation_service = None
 
         self._setup_interface_manager_integration()
+
+    def initialize_database(self, db_path: str = None) -> bool:
+        """初始化数据库连接与 schema
+
+        应在 MainWindow 启动时调用一次。
+        """
+        if db_path is None:
+            import os
+            db_dir = os.path.join(os.path.expanduser("~"), ".class_monitor")
+            os.makedirs(db_dir, exist_ok=True)
+            db_path = os.path.join(db_dir, "data.db")
+        try:
+            database_service.initialize(db_path)
+            print(f"[UnifiedDataManager] 数据库已初始化: {db_path}")
+            return True
+        except Exception as e:
+            print(f"[UnifiedDataManager] 数据库初始化失败: {e}")
+            return False
 
     # ──────────────────── 各模块数据源属性 ────────────────────
 
@@ -311,7 +330,14 @@ class UnifiedDataManager:
             筛选后的会话列表
         """
         if self._database_source == DataSource.REAL:
-            return interface_manager.query_sessions(filter_params)
+            results = database_service.query_sessions(filter_params)
+            # 转换 REAL → str 供界面展示
+            for r in results:
+                if r.get("start_time"):
+                    r["start_time"] = self._ts_to_str(r["start_time"])
+                if r.get("end_time"):
+                    r["end_time"] = self._ts_to_str(r["end_time"])
+            return results
 
         all_sessions = self.generate_all_sessions()
         filtered = []
@@ -342,15 +368,20 @@ class UnifiedDataManager:
 
         return filtered
 
+    @staticmethod
+    def _ts_to_str(ts: float) -> str:
+        import datetime
+        return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
     def generate_records_by_session(self, session_id: str, start_time: str, end_time: str) -> List[Dict[str, Any]]:
         print(f"[UnifiedDataManager] 查询会话记录: session_id={session_id}")
 
-        if self._database_source == DataSource.MOCK:
-            all_records = self.generate_records_for_session(session_id, start_time, end_time)
-            print(f"[UnifiedDataManager] 筛选结果: {len(all_records)} 条记录")
-            return all_records
-        else:
-            return []
+        if self._database_source == DataSource.REAL:
+            return database_service.query_focus_records(session_id)
+
+        all_records = self.generate_records_for_session(session_id, start_time, end_time)
+        print(f"[UnifiedDataManager] 筛选结果: {len(all_records)} 条记录")
+        return all_records
 
     def generate_records_for_session(self, session_id: str, start_time: str = "", end_time: str = "") -> List[Dict[str, Any]]:
         if self._database_source == DataSource.REAL:
@@ -494,8 +525,7 @@ class UnifiedDataManager:
     def initialize_state_estimation_backend(self) -> bool:
         """初始化真实状态估计后端，将 StateEstimationService 接入 interface_manager。
 
-        Returns:
-            True 表示初始化成功
+        同时注入数据库写回调，实现回调解耦。
         """
         try:
             from ..state_estimation.service import StateEstimationService
@@ -503,12 +533,23 @@ class UnifiedDataManager:
             service = StateEstimationService()
             service.set_log_callback(lambda msg: print(msg))
 
-            # 桥接：contracts.FocusResultData → dict → interface_manager
+            # 桥接：contracts.FocusResultData → dict → interface_manager（SEI-01）
             service.set_focus_result_callback(
                 lambda result: interface_manager.on_focus_result_received(
                     result.to_dict()
                 )
             )
+
+            # 注入数据库写回调（回调解耦：状态估计模块不直接 import 数据库模块）
+            # 注意：StateEstimationService.set_record_writer() 待状态估计模块实现
+            if hasattr(service, "set_record_writer"):
+                service.set_record_writer(
+                    lambda records: database_service.insert_focus_records_batch(records)
+                )
+                print("[UnifiedDataManager] 数据库写回调已注入状态估计模块")
+            else:
+                print("[UnifiedDataManager] 警告: StateEstimationService 未实现 set_record_writer，"
+                      "会话结束后评分数据不会持久化")
 
             adapter = StateEstimationCommandAdapter(service)
             interface_manager.set_state_estimation_callback(adapter)

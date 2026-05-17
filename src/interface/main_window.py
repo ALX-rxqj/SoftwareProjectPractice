@@ -22,7 +22,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1280, 720)
         self.showMaximized()
         self.setStyleSheet(get_style("main_window"))
-        self.current_mode = "网课模式"
+        self.current_mode = "class"
         self.current_face_id = None
         self.current_device_id = 0
         self.init_ui()
@@ -32,6 +32,10 @@ class MainWindow(QMainWindow):
 
     def _setup_interface_manager(self):
         """配置接口管理器，连接预处理模块和状态估计模块"""
+
+        # 数据库必须在任何模块初始化之前就绪
+        if not unified_data_manager.initialize_database():
+            print("[MainWindow] 警告: 数据库初始化失败，历史数据功能不可用")
 
         if unified_data_manager.initialize_real_backend():
             print("[MainWindow] 已连接真实预处理后端")
@@ -196,9 +200,8 @@ class MainWindow(QMainWindow):
             self.switch_to_query_mode()
         else:
             self.switch_to_monitoring_mode(mode)
-            mode_str = "class" if mode == "网课模式" else "exam"
-            result = interface_manager.switch_mode(mode_str)
-            print(f"[MainWindow] 切换模式: {mode_str}, 结果: {result}")
+            result = interface_manager.switch_mode(mode)
+            print(f"[MainWindow] 切换模式: {mode}, 结果: {result}")
 
     def switch_to_monitoring_mode(self, mode):
         self.main_stacked_layout.setCurrentIndex(0)
@@ -268,8 +271,7 @@ class MainWindow(QMainWindow):
         if session_result and "session_id" in session_result:
             print(f"[MainWindow] 创建会话成功: {session_result['session_id']}")
 
-        mode_str = "class" if self.current_mode == "网课模式" else "exam"
-        interface_manager.switch_mode(mode_str)
+        interface_manager.switch_mode(self.current_mode)
 
         self.video_widget.start_processing()
         self.top_nav.set_recording(True)

@@ -18,9 +18,12 @@
   - update_warn_threshold() - 告警阈值更新
 """
 
+import time as _time
 from typing import Callable, Optional, Dict, Any, List
 from dataclasses import dataclass
 from enum import Enum
+
+from ..database.database_service import database_service
 
 
 class MonitorMode(Enum):
@@ -247,7 +250,6 @@ class InterfaceManager:
         """
         指令：启动/停止专注度分析
         路由：直接至状态估计模块
-        关联函数：toggle_analysis -> on_control_analysis
 
         Args:
             start: bool - True启动，False停止
@@ -261,37 +263,43 @@ class InterfaceManager:
         self._is_analysis_running = start
 
         if start:
-            if self._state_estimation_callback:
-                result = self._state_estimation_callback("toggle_analysis", {"start": True})
-                if result and "session_id" in result:
-                    self._current_session_id = result["session_id"]
-                    return {"session_id": self._current_session_id}
             session_id = self.start_new_session()
             return {"session_id": session_id}
         else:
-            if self._state_estimation_callback:
-                self._state_estimation_callback("toggle_analysis", {"start": False})
-            elif self._current_session_id:
+            if self._current_session_id:
                 self.stop_session(self._current_session_id)
             self._is_analysis_running = False
             return {"success": True}
 
-    def start_new_session(self) -> str:
+    def start_new_session(self, student_id: str = None) -> str:
         """
         指令：创建新会话
-        路由：直接至状态估计模块
-        关联函数：start_new_session -> on_session_init
+        路由：直接至数据库模块（写 sessions 表）
+
+        Args:
+            student_id: 可选，被监控学生标识
 
         Returns:
             session_id: str
         """
         import uuid
         self._current_session_id = f"session_{uuid.uuid4().hex[:8]}"
+        start_time = _time.time()
+        mode_str = self._current_mode.value  # "class" or "exam"
         print(f"[InterfaceManager] 创建新会话: {self._current_session_id}")
 
+        database_service.create_session({
+            "session_id": self._current_session_id,
+            "student_id": student_id,
+            "mode": mode_str,
+            "start_time": start_time,
+        })
+
         if self._state_estimation_callback:
-            self._state_estimation_callback("start_session", {
-                "session_id": self._current_session_id
+            self._state_estimation_callback("toggle_analysis", {
+                "start": True,
+                "session_id": self._current_session_id,
+                "mode": mode_str,
             })
 
         return self._current_session_id
@@ -299,8 +307,7 @@ class InterfaceManager:
     def stop_session(self, session_id: str) -> Dict[str, Any]:
         """
         指令：结束会话
-        路由：直接至状态估计模块
-        关联函数：stop_session -> on_session_end
+        路由：直接至数据库模块（UPDATE end_time + 聚合计算）和状态估计模块
 
         Args:
             session_id: str
@@ -310,12 +317,17 @@ class InterfaceManager:
         """
         print(f"[InterfaceManager] 结束会话: {session_id}")
 
+        end_time = _time.time()
+
+        # 先通知状态估计模块停止评分并 flush 数据
         if self._state_estimation_callback:
-            result = self._state_estimation_callback("stop_session", {
-                "session_id": session_id
+            result = self._state_estimation_callback("toggle_analysis", {
+                "start": False,
+                "session_id": session_id,
             })
-            if result:
-                return result
+
+        # 数据库模块更新 end_time + 聚合计算
+        database_service.end_session(session_id, end_time)
 
         if session_id == self._current_session_id:
             self._current_session_id = None

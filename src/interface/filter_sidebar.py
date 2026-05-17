@@ -122,6 +122,7 @@ class FilterSidebar(QFrame):
 
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["全部模式", "网课模式", "考试模式"])
+        self._mode_values = ["全部模式", "class", "exam"]  # 与 combo index 一一对应
         self.mode_combo.setFont(QFont(*get_font("sm")))
         self.mode_combo.setStyleSheet(get_style("combo_box"))
         self.mode_combo.currentTextChanged.connect(self.on_filter_changed)
@@ -249,10 +250,12 @@ class FilterSidebar(QFrame):
         pass
 
     def on_apply_clicked(self):
+        idx = self.mode_combo.currentIndex()
+        mode_value = self._mode_values[idx] if idx > 0 else None
         filter_params = {
             "start_date": self.start_date_edit.date().toString("yyyy-MM-dd"),
             "end_date": self.end_date_edit.date().toString("yyyy-MM-dd"),
-            "mode": self.mode_combo.currentText() if self.mode_combo.currentText() != "全部模式" else None,
+            "mode": mode_value,
             "focus_min": self.focus_min_spin.value(),
             "focus_max": self.focus_max_spin.value(),
             "abnormal_min": self.abnormal_min_spin.value(),
@@ -262,10 +265,12 @@ class FilterSidebar(QFrame):
         self.filter_applied.emit(filter_params)
 
     def get_current_filter(self):
+        idx = self.mode_combo.currentIndex()
+        mode_value = self._mode_values[idx] if idx > 0 else None
         return {
             "start_date": self.start_date_edit.date().toString("yyyy-MM-dd"),
             "end_date": self.end_date_edit.date().toString("yyyy-MM-dd"),
-            "mode": self.mode_combo.currentText() if self.mode_combo.currentText() != "全部模式" else None,
+            "mode": mode_value,
             "focus_min": self.focus_min_spin.value(),
             "focus_max": self.focus_max_spin.value(),
             "abnormal_min": self.abnormal_min_spin.value(),

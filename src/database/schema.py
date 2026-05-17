@@ -1,155 +1,34 @@
 """数据库表结构定义 + Schema 版本管理
 
-包含 12 张业务表的 @dataclass 结构，以及 SchemaManager 单例用于版本管理。
+包含 3 张核心表的 @dataclass 结构，以及 SchemaManager 单例用于建表和版本管理。
 """
 
+import sqlite3
 from dataclasses import dataclass, field
 from typing import Optional
 
 
 # ============================================================
-# 表 1: 预处理帧记录表
+# 表 1: 会话信息表 sessions
 # ============================================================
 @dataclass
-class PreprocessingFrameRecord:
-    id: Optional[int] = None
-    timestamp: float = 0.0
-    frame_index: int = 0
-    video_source_type: str = ""
-    frame_path: Optional[str] = None
-    frame_status: str = "valid"
-    anomaly_type: Optional[str] = None
-    has_face: bool = False
-    main_face_id: Optional[int] = None
+class SessionRecord:
+    session_id: str
+    mode: str  # "class" | "exam"
+    start_time: float
+    student_id: Optional[str] = None
+    end_time: Optional[float] = None
+    avg_focus_score: Optional[float] = None
+    abnormal_event_count: int = 0
 
 
 # ============================================================
-# 表 2: 人脸检测结果记录表
+# 表 2: 专注度评分记录表 focus_records
 # ============================================================
 @dataclass
-class FaceDetectionRecord:
-    id: Optional[int] = None
-    timestamp: float = 0.0
-    frame_index: int = 0
-    face_id: int = 0
-    bbox_x: int = 0
-    bbox_y: int = 0
-    bbox_w: int = 0
-    bbox_h: int = 0
-    is_main_face: bool = False
-    face_count: int = 0
-
-
-# ============================================================
-# 表 3: 人脸图像索引表
-# ============================================================
-@dataclass
-class FaceImageIndexRecord:
-    id: Optional[int] = None
-    timestamp: float = 0.0
-    frame_index: int = 0
-    face_id: int = 0
-    image_path: Optional[str] = None
-    image_width: int = 0
-    image_height: int = 0
-    color_format: str = ""
-
-
-# ============================================================
-# 表 4: 异常帧过滤记录表
-# ============================================================
-@dataclass
-class AbnormalFrameRecord:
-    id: Optional[int] = None
-    timestamp: float = 0.0
-    frame_index: int = 0
-    anomaly_type: str = ""
-    handle_method: str = ""
-    log_description: str = ""
-
-
-# ============================================================
-# 表 5: 帧特征记录表
-# ============================================================
-@dataclass
-class FrameFeatureRecord:
-    id: Optional[int] = None
-    session_id: str = ""
-    frame_index: int = 0
-    timestamp: float = 0.0
-    face_id: int = 0
-    head_pitch: float = 0.0
-    head_yaw: float = 0.0
-    head_roll: float = 0.0
-    eye_state: str = ""
-    expression_type: str = ""
-    is_head_down: bool = False
-    is_yawning: bool = False
-    body_state: str = ""
-    body_tilt: str = ""
-    person_count: int = 0
-    confidence: float = 0.0
-
-
-# ============================================================
-# 表 6: 头部姿态评分记录表
-# ============================================================
-@dataclass
-class HeadPoseScoreRecord:
-    id: Optional[int] = None
-    timestamp: float = 0.0
-    pitch_score: float = 0.0
-    yaw_score: float = 0.0
-    roll_score: float = 0.0
-    weighted_average: float = 0.0
-
-
-# ============================================================
-# 表 7: 行为动作评分记录表
-# ============================================================
-@dataclass
-class BehaviorScoreRecord:
-    id: Optional[int] = None
-    timestamp: float = 0.0
-    eye_score: float = 0.0
-    yawning_score: float = 0.0
-    body_state_score: float = 0.0
-    body_tilt_score: float = 0.0
-    behavior_composite_score: float = 0.0
-
-
-# ============================================================
-# 表 8: 表情评分记录表
-# ============================================================
-@dataclass
-class ExpressionScoreRecord:
-    id: Optional[int] = None
-    timestamp: float = 0.0
-    expression_type: str = ""
-    expression_composite_score: float = 0.0
-
-
-# ============================================================
-# 表 9: 人数评分记录表
-# ============================================================
-@dataclass
-class PeopleCountScoreRecord:
-    id: Optional[int] = None
-    session_id: str = ""
-    timestamp: float = 0.0
-    face_count: int = 0
-    people_score: float = 0.0
-    cumulative_zero_count: int = 0
-
-
-# ============================================================
-# 表 10: 专注度评分记录表（当前 UI 查询使用）
-# ============================================================
-@dataclass
-class FocusScoreRecord:
-    id: Optional[int] = None
-    session_id: str = ""
-    timestamp: float = 0.0
+class FocusRecord:
+    session_id: str
+    timestamp: float
     head_pose_score: float = 0.0
     behavior_score: float = 0.0
     expression_score: float = 0.0
@@ -157,33 +36,22 @@ class FocusScoreRecord:
     people_score: float = 0.0
     final_focus_score: float = 0.0
     is_force_zero: bool = False
+    id: Optional[int] = None
+    date: str = ""
+    time: str = ""
 
 
 # ============================================================
-# 表 11: 会话信息表（当前 UI 查询使用）
+# 表 3: 告警事件记录表 alert_events
 # ============================================================
 @dataclass
-class SessionInfoRecord:
+class AlertEventRecord:
+    session_id: str
+    timestamp: float
+    alert_type: str
+    detail: str = ""
+    frame_timestamp: Optional[float] = None
     id: Optional[int] = None
-    session_id: str = ""
-    start_time: str = ""
-    end_time: str = ""
-    mode: str = ""
-    avg_focus_score: float = 0.0
-    abnormal_event_count: int = 0
-
-
-# ============================================================
-# 表 12: 告警事件记录表
-# ============================================================
-@dataclass
-class AlarmEventRecord:
-    id: Optional[int] = None
-    session_id: str = ""
-    trigger_timestamp: float = 0.0
-    alarm_type: str = ""
-    alarm_detail: str = ""
-    related_frame_timestamp: Optional[float] = None
 
 
 # ============================================================
@@ -193,7 +61,71 @@ class SchemaManager:
     """数据库 Schema 版本管理器（单例）"""
 
     _instance: Optional["SchemaManager"] = None
-    CURRENT_VERSION: int = 0
+    CURRENT_VERSION: int = 1
+
+    _DDL = {
+        1: [
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id      TEXT PRIMARY KEY,
+                student_id      TEXT,
+                mode            TEXT NOT NULL CHECK(mode IN ('class', 'exam')),
+                start_time      REAL NOT NULL,
+                end_time        REAL,
+                avg_focus_score REAL,
+                abnormal_event_count INTEGER DEFAULT 0
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS focus_records (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id      TEXT NOT NULL,
+                timestamp       REAL NOT NULL,
+                date            TEXT NOT NULL,
+                time            TEXT NOT NULL,
+                head_pose_score REAL,
+                behavior_score  REAL,
+                expression_score REAL,
+                evidence_score  REAL,
+                people_score    REAL,
+                final_focus_score REAL,
+                is_force_zero   INTEGER DEFAULT 0,
+                FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS alert_events (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id      TEXT NOT NULL,
+                timestamp       REAL NOT NULL,
+                alert_type      TEXT NOT NULL,
+                detail          TEXT,
+                frame_timestamp REAL,
+                FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_sessions_start_time
+                ON sessions(start_time)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_sessions_mode
+                ON sessions(mode)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_sessions_student_id
+                ON sessions(student_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_focus_records_session_time
+                ON focus_records(session_id, timestamp)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_alert_events_session
+                ON alert_events(session_id)
+            """,
+        ]
+    }
 
     def __new__(cls) -> "SchemaManager":
         if cls._instance is None:
@@ -210,11 +142,22 @@ class SchemaManager:
         """返回当前 schema 版本号"""
         return SchemaManager.CURRENT_VERSION
 
-    def ensure_schema(self) -> None:
-        """Stub: 校验或初始化数据库表结构
-        当前为占位实现，设计确定后实现建表与迁移逻辑。
+    def ensure_schema(self, connection: sqlite3.Connection) -> None:
+        """执行建表与索引创建（幂等）
+
+        Args:
+            connection: sqlite3.Connection，由 ConnectionManager 提供
         """
-        print(f"[SchemaManager] Schema 校验 stub (v{SchemaManager.CURRENT_VERSION})")
+        statements = self._DDL.get(SchemaManager.CURRENT_VERSION, [])
+        cursor = connection.cursor()
+        for stmt in statements:
+            try:
+                cursor.execute(stmt)
+            except sqlite3.Error as e:
+                print(f"[SchemaManager] DDL 执行失败: {e}\n  SQL: {stmt[:100]}...")
+                raise
+        connection.commit()
+        print(f"[SchemaManager] Schema v{SchemaManager.CURRENT_VERSION} 就绪")
 
 
 schema_manager = SchemaManager()

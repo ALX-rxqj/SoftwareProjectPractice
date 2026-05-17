@@ -76,7 +76,10 @@ class DataRecordWidget(QFrame):
 
         parts = [f"{filter_params.get('start_date', '')} ~ {filter_params.get('end_date', '')}"]
         if filter_params.get("mode"):
-            parts.append(filter_params["mode"])
+            mode_display = {"class": "网课模式", "exam": "考试模式"}.get(
+                filter_params["mode"], filter_params["mode"]
+            )
+            parts.append(mode_display)
         parts.append(f"专注度: {filter_params.get('focus_min', 0)}-{filter_params.get('focus_max', 100)}")
         parts.append(f"异常: {filter_params.get('abnormal_min', 0)}-{filter_params.get('abnormal_max', 100)}")
         self.filter_info_label.setText(" | ".join(parts))
@@ -87,7 +90,9 @@ class DataRecordWidget(QFrame):
             session_id = session.get("session_id", "")
             start_time = session.get("start_time", "")
             end_time = session.get("end_time", "")
-            mode = session.get("mode", "")
+            mode = {"class": "网课模式", "exam": "考试模式"}.get(
+                session.get("mode", ""), session.get("mode", "")
+            )
             avg_focus = session.get("avg_focus_score", 0)
             abnormal_count = session.get("abnormal_event_count", 0)
 

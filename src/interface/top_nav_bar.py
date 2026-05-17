@@ -17,7 +17,8 @@ class TopNavBar(QFrame):
         super().__init__(parent)
         self.setMinimumHeight(TOP_NAV_HEIGHT)
         self.setStyleSheet(get_style("nav_bar_gradient"))
-        self._current_mode = "网课模式"
+        self._current_mode = "class"
+        self._mode_display_map = {"网课模式": "class", "考试模式": "exam", "数据查询": "数据查询"}
         self.init_ui()
 
     def init_ui(self):
@@ -43,7 +44,7 @@ class TopNavBar(QFrame):
         title_label.setStyleSheet(f"color: {COLORS['text']};")
         title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        self.sub_title = QLabel("网课模式")
+        self.sub_title = QLabel("网课模式")  # 初始显示
         self.sub_title.setFont(QFont(*get_font("sm", "normal", "ui")))
         self.sub_title.setStyleSheet(get_style("label_secondary"))
         title_layout.addWidget(title_label)
@@ -102,17 +103,21 @@ class TopNavBar(QFrame):
         layout.addWidget(self.btn_register_face)
 
     def on_mode_click(self, btn):
-        self._current_mode = btn.text()
-        self.mode_changed.emit(btn.text())
+        display_text = btn.text()
+        self._current_mode = self._mode_display_map.get(display_text, display_text)
+        self.mode_changed.emit(self._current_mode)
 
     def set_mode(self, mode):
         self._current_mode = mode
+        # 反向映射：English → 中文展示
+        display_map = {"class": "网课模式", "exam": "考试模式", "数据查询": "数据查询"}
+        display_text = display_map.get(mode, mode)
         for i in range(self.mode_group.buttons().__len__()):
             btn = self.mode_group.button(i)
-            if btn.text() == mode:
+            if self._mode_display_map.get(btn.text()) == mode:
                 btn.setChecked(True)
                 break
-        self.sub_title.setText(mode)
+        self.sub_title.setText(display_text)
         if mode == "数据查询":
             self.record_dot.setStyleSheet(get_style("dot_hint"))
             self.record_label.setText("数据表")
