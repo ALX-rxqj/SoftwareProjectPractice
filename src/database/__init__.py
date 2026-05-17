@@ -5,25 +5,16 @@
 - SchemaManager:         Schema 版本管理（单例）
 - DatabaseService:       命令路由 + 查询服务（单例）
 - DatabaseCommandAdapter: InterfaceManager 回调适配器
-- 12 个 @dataclass:       业务表数据结构
+- 3 个 @dataclass:       业务表数据结构
 """
 
 from .connection import ConnectionManager, connection_manager
 from .schema import (
     SchemaManager,
     schema_manager,
-    PreprocessingFrameRecord,
-    FaceDetectionRecord,
-    FaceImageIndexRecord,
-    AbnormalFrameRecord,
-    FrameFeatureRecord,
-    HeadPoseScoreRecord,
-    BehaviorScoreRecord,
-    ExpressionScoreRecord,
-    PeopleCountScoreRecord,
-    FocusScoreRecord,
-    SessionInfoRecord,
-    AlarmEventRecord,
+    SessionRecord,
+    FocusRecord,
+    AlertEventRecord,
 )
 from .database_service import DatabaseService, database_service
 from .command_adapter import DatabaseCommandAdapter
@@ -36,18 +27,9 @@ __all__ = [
     "SchemaManager",
     "schema_manager",
     # 表结构 @dataclass
-    "PreprocessingFrameRecord",
-    "FaceDetectionRecord",
-    "FaceImageIndexRecord",
-    "AbnormalFrameRecord",
-    "FrameFeatureRecord",
-    "HeadPoseScoreRecord",
-    "BehaviorScoreRecord",
-    "ExpressionScoreRecord",
-    "PeopleCountScoreRecord",
-    "FocusScoreRecord",
-    "SessionInfoRecord",
-    "AlarmEventRecord",
+    "SessionRecord",
+    "FocusRecord",
+    "AlertEventRecord",
     # 服务层
     "DatabaseService",
     "database_service",

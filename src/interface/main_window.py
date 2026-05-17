@@ -12,6 +12,7 @@ from .data_record_widget import DataRecordWidget
 from .session_detail_widget import SessionDetailWidget
 from .interface_manager import interface_manager
 from .unified_data_manager import unified_data_manager, CameraInfo
+from .face_registration_dialog import FaceRegistrationDialog
 
 
 class MainWindow(QMainWindow):
@@ -21,7 +22,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1280, 720)
         self.showMaximized()
         self.setStyleSheet(get_style("main_window"))
-        self.current_mode = "网课模式"
+        self.current_mode = "class"
         self.current_face_id = None
         self.current_device_id = 0
         self.init_ui()
@@ -31,6 +32,10 @@ class MainWindow(QMainWindow):
 
     def _setup_interface_manager(self):
         """配置接口管理器，连接预处理模块和状态估计模块"""
+
+        # 数据库必须在任何模块初始化之前就绪
+        if not unified_data_manager.initialize_database():
+            print("[MainWindow] 警告: 数据库初始化失败，历史数据功能不可用")
 
         if unified_data_manager.initialize_real_backend():
             print("[MainWindow] 已连接真实预处理后端")
@@ -167,6 +172,8 @@ class MainWindow(QMainWindow):
         self.left_sidebar.camera_selected.connect(self.on_camera_selected)
         self.left_sidebar.refresh_requested.connect(self.on_refresh_camera_list)
         self.video_widget.frame_updated.connect(self.on_video_frame_updated)
+        self.top_nav.register_face_clicked.connect(self.on_register_face_clicked)
+        self.top_nav_query.register_face_clicked.connect(self.on_register_face_clicked)
 
     def init_data(self):
         """通过统一数据管理器获取初始数据（各模块独立数据源）"""
@@ -193,9 +200,8 @@ class MainWindow(QMainWindow):
             self.switch_to_query_mode()
         else:
             self.switch_to_monitoring_mode(mode)
-            mode_str = "class" if mode == "网课模式" else "exam"
-            result = interface_manager.switch_mode(mode_str)
-            print(f"[MainWindow] 切换模式: {mode_str}, 结果: {result}")
+            result = interface_manager.switch_mode(mode)
+            print(f"[MainWindow] 切换模式: {mode}, 结果: {result}")
 
     def switch_to_monitoring_mode(self, mode):
         self.main_stacked_layout.setCurrentIndex(0)
@@ -265,8 +271,7 @@ class MainWindow(QMainWindow):
         if session_result and "session_id" in session_result:
             print(f"[MainWindow] 创建会话成功: {session_result['session_id']}")
 
-        mode_str = "class" if self.current_mode == "网课模式" else "exam"
-        interface_manager.switch_mode(mode_str)
+        interface_manager.switch_mode(self.current_mode)
 
         self.video_widget.start_processing()
         self.top_nav.set_recording(True)
@@ -305,3 +310,34 @@ class MainWindow(QMainWindow):
         faces = frame_data.get("faces", [])
         if faces:
             self.left_sidebar.update_faces(faces)
+
+    def on_register_face_clicked(self):
+        """注册人脸按钮点击"""
+        if interface_manager.is_capture_running:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "提示",
+                '正在分析中，请先点击"停止分析"后再注册人脸。'
+            )
+            return
+
+        print("[MainWindow] 打开人脸注册弹窗")
+        dialog = FaceRegistrationDialog(
+            device_id=self.current_device_id, parent=self
+        )
+        dialog.registration_completed.connect(self.on_face_registration_completed)
+        dialog.show()
+
+    def on_face_registration_completed(self, data: dict):
+        """人脸注册完成回调"""
+        name = data.get("student_name", "")
+        frames = data.get("frames", [])
+        storage_type = data.get("storage_type", "temp")
+
+        print(
+            f"[MainWindow] 人脸注册完成: name={name}, "
+            f"frames={len(frames)}, storage={storage_type}"
+        )
+
+        result = interface_manager.register_face(name, frames, storage_type)
+        print(f"[MainWindow] register_face 结果: {result}")

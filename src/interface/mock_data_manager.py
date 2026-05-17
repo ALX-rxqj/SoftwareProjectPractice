@@ -131,7 +131,7 @@ class MockDataManager:
             session_id=session_id,
             start_time=f"{date} {time}",
             end_time=f"{date} {end_hour:02d}:{end_minute:02d}:00",
-            mode=random.choice(["网课模式", "考试模式"]),
+            mode=random.choice(["class", "exam"]),
             avg_focus_score=avg_focus,
             abnormal_event_count=random.randint(0, 5)
         )
@@ -442,7 +442,7 @@ class MockDataManager:
             events.append({
                 "session_id": session_id,
                 "timestamp": random.uniform(0, 3600),
-                "alarm_type": random.choice(alarm_types)["type"],
+                "alert_type": random.choice(alarm_types)["type"],
                 "detail": random.choice(alarm_types)["detail"],
                 "frame_timestamp": random.uniform(0, 3600)
             })

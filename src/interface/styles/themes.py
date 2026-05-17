@@ -657,6 +657,120 @@ def get_style(style_name: str) -> str:
                 padding: {SIZES['spacing']['xs']}px {SIZES['spacing']['sm']}px;
             }}
         """,
+
+        # ──────────────────── 人脸注册按钮 ────────────────────
+        "register_face_button": f"""
+            QPushButton {{
+                color: {COLORS['text']};
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {COLORS['primary']}, stop:1 {COLORS['secondary']});
+                border: 1px solid rgba(122, 92, 255, 0.3);
+                border-radius: {SIZES['radius']['base']}px;
+                font-weight: {FONTS['weight']['bold']};
+            }}
+            QPushButton:hover {{
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {COLORS['primary_light']}, stop:1 {COLORS['secondary']});
+                border: 1px solid rgba(122, 92, 255, 0.5);
+            }}
+            QPushButton:pressed {{
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {COLORS['primary_dark']}, stop:1 {COLORS['primary']});
+            }}
+        """,
+
+        # ──────────────────── 完成页按钮 ────────────────────
+        "completion_btn_local": f"""
+            QPushButton {{
+                color: #FFFFFF;
+                background-color: #4A7CFF;
+                border: none;
+                border-radius: {SIZES['radius']['base']}px;
+                font-weight: {FONTS['weight']['bold']};
+                font-size: {FONTS['size']['base']}px;
+                padding: {SIZES['spacing']['sm']}px {SIZES['spacing']['xl']}px;
+            }}
+            QPushButton:hover {{
+                background-color: #5B8DFF;
+            }}
+            QPushButton:pressed {{
+                background-color: #3960CC;
+            }}
+        """,
+
+        "completion_btn_temp": f"""
+            QPushButton {{
+                color: #FFFFFF;
+                background-color: #00C853;
+                border: none;
+                border-radius: {SIZES['radius']['base']}px;
+                font-weight: {FONTS['weight']['bold']};
+                font-size: {FONTS['size']['base']}px;
+                padding: {SIZES['spacing']['sm']}px {SIZES['spacing']['xl']}px;
+            }}
+            QPushButton:hover {{
+                background-color: #00E070;
+            }}
+            QPushButton:pressed {{
+                background-color: #009940;
+            }}
+        """,
+
+        "completion_btn_cancel": f"""
+            QPushButton {{
+                color: #4A7CFF;
+                background-color: #FFFFFF;
+                border: 1px solid #4A7CFF;
+                border-radius: {SIZES['radius']['base']}px;
+                font-weight: {FONTS['weight']['medium']};
+                font-size: {FONTS['size']['base']}px;
+                padding: {SIZES['spacing']['sm']}px {SIZES['spacing']['xl']}px;
+            }}
+            QPushButton:hover {{
+                background-color: #F0F4FF;
+            }}
+            QPushButton:pressed {{
+                background-color: #E0E8F8;
+            }}
+        """,
+
+        # ──────────────────── 人脸注册弹窗 ────────────────────
+        "face_registration_dialog": f"""
+            QDialog {{
+                background-color: {COLORS['surface']};
+                border: 1px solid {COLORS['border_light']};
+                border-radius: {SIZES['radius']['xxl']}px;
+            }}
+        """,
+
+        "face_registration_overlay": f"""
+            background-color: rgba(0, 0, 0, 0.65);
+            border: none;
+        """,
+
+        "pose_guide_label": f"""
+            color: {COLORS['text']};
+            font-size: {FONTS['size']['xl']}px;
+            font-weight: {FONTS['weight']['bold']};
+            background: transparent;
+        """,
+
+        "input_field_dialog": f"""
+            QLineEdit {{
+                background-color: {COLORS['card']};
+                color: {COLORS['text']};
+                border: 1px solid {COLORS['border_light']};
+                border-radius: {SIZES['radius']['base']}px;
+                padding: {SIZES['spacing']['base']}px {SIZES['spacing']['md']}px;
+                font-size: {FONTS['size']['md']}px;
+            }}
+            QLineEdit:focus {{
+                border-color: {COLORS['primary']};
+            }}
+            QLineEdit::placeholder {{
+                color: {COLORS['text_hint']};
+            }}
+        """,
     }
     return styles.get(style_name, "")
 
