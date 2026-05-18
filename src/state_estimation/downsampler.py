@@ -44,6 +44,7 @@ class Downsampler:
         self._window_seconds = window_seconds
         self._consecutive_threshold = consecutive_threshold
         self._buffer: List[FocusResultData] = []
+        self._last_db_frame: Optional[FocusResultData] = None
 
     def add_frame(self, result: FocusResultData) -> Optional[FocusResultData]:
         """
@@ -80,6 +81,13 @@ class Downsampler:
     def reset(self):
         """清空缓冲区（用于会话切换）"""
         self._buffer.clear()
+        self._last_db_frame = None
+
+    def get_db_frame(self) -> Optional[FocusResultData]:
+        """获取当前窗口的数据库降采样结果（消费式，取后即清）"""
+        result = self._last_db_frame
+        self._last_db_frame = None
+        return result
 
     # ================================================================
     # 窗口处理逻辑
@@ -93,6 +101,9 @@ class Downsampler:
         # 分离正常帧和异常帧
         normal_frames = [f for f in self._buffer if not f.is_force_zero]
         anomaly_frames = [f for f in self._buffer if f.is_force_zero]
+
+        # DB 降采样（在清 buffer 前计算）
+        self._last_db_frame = self._pick_db_frame(normal_frames, anomaly_frames)
 
         if normal_frames:
             output = self._pick_from_normal(normal_frames, anomaly_frames)
@@ -255,16 +266,32 @@ class Downsampler:
         return None
 
 
-# ================================================================
-# 数据库部分（暂不实现——数据库表结构尚未确定）
-# ================================================================
-# 数据库降采样规则：
-# 1. 窗口内统计异常帧占比
-# 2. 异常占比 ≥ 0.5 → 存入窗口内第一个异常帧
-# 3. 异常占比 < 0.5 → 存入规则与 UI 一致（normal 中选最接近均值的帧）
-#
-# 方法签名（预留）：
-#   def _db_pick_frame(self, normal_frames, anomaly_frames) -> FocusResultData:
-#       ...
-#
-# 待数据库模块就绪后实现。
+    # ================================================================
+    # 数据库降采样
+    # ================================================================
+
+    def _pick_db_frame(
+        self,
+        normal_frames: List[FocusResultData],
+        anomaly_frames: List[FocusResultData],
+    ) -> Optional[FocusResultData]:
+        """
+        数据库降采样规则：
+        1. 窗口内统计异常帧占比
+        2. 异常占比 ≥ 0.5 → 存入窗口内第一个异常帧
+        3. 异常占比 < 0.5 → 存入规则与 UI 一致（normal 中选最接近均值的帧）
+        """
+        total = len(normal_frames) + len(anomaly_frames)
+        if total == 0:
+            return None
+
+        anomaly_ratio = len(anomaly_frames) / total
+
+        if anomaly_ratio >= 0.5:
+            sorted_anomaly = sorted(anomaly_frames, key=lambda f: f.timestamp)
+            return sorted_anomaly[0]
+        else:
+            if not normal_frames:
+                return None
+            mean_focus = sum(f.final_focus_score for f in normal_frames) / len(normal_frames)
+            return min(normal_frames, key=lambda f: abs(f.final_focus_score - mean_focus))

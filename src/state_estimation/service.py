@@ -75,6 +75,10 @@ class StateEstimationService:
         # 模拟评分记录缓存（用于 on_query_records 的 MOCK 模式）
         self._mock_records_cache: Dict[str, List[Dict[str, Any]]] = {}
 
+        # 数据库写入
+        self._db_buffer: List[Dict[str, Any]] = []
+        self._write_callback: Optional[Callable[[List[Dict[str, Any]]], Any]] = None
+
     # ==================== 回调注册 ====================
 
     def set_preprocessing_callback(self, callback: CommandCallback):
@@ -111,6 +115,11 @@ class StateEstimationService:
             callback: 日志输出回调
         """
         self._log_callback = callback
+
+    def set_record_writer(self, callback: Callable[[List[Dict[str, Any]]], Any]):
+        """设置数据库写回调，由 UnifiedDataManager 注入"""
+        self._write_callback = callback
+        self._log("数据库写回调已设置")
 
     # ================================================================
     # 对外公开接口（on_* 系列）
@@ -249,6 +258,7 @@ class StateEstimationService:
 
         try:
             success = self._session_manager.end_session(session_id)
+            self._flush_db_buffer()
             return {"success": success}
         except ValueError as e:
             return {"success": False, "msg": str(e)}
@@ -635,6 +645,10 @@ class StateEstimationService:
         downsampled = self._downsampler.add_frame(result)
         if downsampled is not None:
             self._dispatch_focus_result(downsampled)
+            # 收集同窗口的 DB 降采样帧
+            db_frame = self._downsampler.get_db_frame()
+            if db_frame is not None:
+                self._db_buffer.append(db_frame.to_dict())
 
         # 更新会话统计（所有帧都统计，不经过降采样）
         if session_id:
@@ -691,6 +705,12 @@ class StateEstimationService:
         remaining = self._downsampler.flush()
         if remaining:
             self._dispatch_focus_result(remaining)
+            db_frame = self._downsampler.get_db_frame()
+            if db_frame is not None:
+                self._db_buffer.append(db_frame.to_dict())
+
+        # 刷库
+        self._flush_db_buffer()
 
         self._log("专注度分析已停止")
 
@@ -842,6 +862,17 @@ class StateEstimationService:
     # 服务生命周期
     # ================================================================
 
+    def _flush_db_buffer(self):
+        """将缓冲的评分记录批量写入数据库"""
+        if self._write_callback and self._db_buffer:
+            try:
+                self._write_callback(self._db_buffer)
+                self._log(f"已写入 {len(self._db_buffer)} 条评分记录到数据库")
+            except Exception as e:
+                self._log(f"数据库写入失败: {e}")
+            finally:
+                self._db_buffer.clear()
+
     def _log(self, message: str):
         """输出日志"""
         if self._log_callback:
@@ -867,4 +898,5 @@ class StateEstimationService:
         self._estimator.reset()
         self._downsampler.reset()
         self._mock_records_cache.clear()
+        self._db_buffer.clear()
         self._log("状态估计服务已重置")
