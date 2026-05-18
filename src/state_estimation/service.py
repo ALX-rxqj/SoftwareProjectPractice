@@ -33,6 +33,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 from .contracts import FeatureData, FocusResultData, MonitorMode, WarnInfo
+from .downsampler import Downsampler
 from .estimator import FocusEstimator
 from .session_manager import SessionManager
 
@@ -55,6 +56,7 @@ class StateEstimationService:
         # 管理器和评估器
         self._session_manager = SessionManager()
         self._estimator = FocusEstimator()
+        self._downsampler = Downsampler()
 
         # 回调函数
         self._preprocessing_callback: Optional[CommandCallback] = None
@@ -446,6 +448,7 @@ class StateEstimationService:
                 "people_score": round(random.uniform(85, 100), 1),
                 "final_focus_score": round(final_score, 1),
                 "is_force_zero": random.random() < 0.03,  # 3%概率强制置零
+                "is_over_threshold": False,  # MOCK 模式默认未超阈值
                 "warn_info": (
                     {
                         "type": "low_score",
@@ -585,6 +588,7 @@ class StateEstimationService:
             attention_state=features.get("attention_state", {}),
             face_distance_state=features.get("face_distance_state", {}),
             is_yawning=features.get("is_yawning", {}),
+            num_face_total=features.get("num_face_total", {"value": 1, "confidence": 1.0}),
         )
         # 进入统一的评分处理管线
         self.on_feature_received(feature_data)
@@ -597,8 +601,8 @@ class StateEstimationService:
         1. 检查是否处于分析状态
         2. 调用评估器计算各维度评分
         3. 构建 FocusResultData
-        4. 通过 SEI-01 接口（_focus_result_callback）推送给界面模块
-        5. 更新会话统计信息
+        4. 送入降采样器（1秒时间窗），窗满时通过 SEI-01 推送
+        5. 更新会话统计信息（所有帧均统计）
 
         Args:
             feature_data: 特征数据
@@ -609,11 +613,8 @@ class StateEstimationService:
         # 计算专注度评分
         session_id = self._session_manager.current_session_id or "unknown"
 
-        # 模拟人数检测（后续应从预处理模块获取）
-        num_people = self._estimate_num_people()
-
-        # 使用评估器计算评分
-        scores, is_force_zero, warn_info = self._estimator.estimate(feature_data, num_people)
+        # 使用评估器计算评分（人数从 feature_data.num_face_total 提取）
+        scores, is_force_zero, is_over_threshold, warn_info = self._estimator.estimate(feature_data)
 
         # 构建专注度结果
         result = FocusResultData(
@@ -626,33 +627,22 @@ class StateEstimationService:
             people_score=scores.get("people", 0.0),
             final_focus_score=scores.get("final_focus", 0.0),
             is_force_zero=is_force_zero,
+            is_over_threshold=is_over_threshold,
             warn_msg=warn_info,
         )
 
-        # 通过SEI-01接口发送到界面模块
-        self._dispatch_focus_result(result)
+        # 降采样：窗口满时才输出，否则缓存
+        downsampled = self._downsampler.add_frame(result)
+        if downsampled is not None:
+            self._dispatch_focus_result(downsampled)
 
-        # 更新会话统计
+        # 更新会话统计（所有帧都统计，不经过降采样）
         if session_id:
             self._session_manager.update_session_stats(
                 session_id,
                 frames_processed=1,
                 abnormal_events=1 if warn_info else 0
             )
-
-    def _estimate_num_people(self) -> int:
-        """
-        估算人数（模拟实现）
-
-        实际应用中应从预处理模块获取准确的人数信息。
-
-        Returns:
-            人数
-        """
-        # 模拟：90%概率单人，10%概率多人
-        if random.random() < 0.1:
-            return random.randint(2, 3)
-        return 1
 
     def _dispatch_focus_result(self, result: FocusResultData):
         """
@@ -697,6 +687,11 @@ class StateEstimationService:
         if self._processing_thread and self._processing_thread.is_alive():
             self._processing_thread.join(timeout=2.0)
 
+        # 降采样器输出残余帧
+        remaining = self._downsampler.flush()
+        if remaining:
+            self._dispatch_focus_result(remaining)
+
         self._log("专注度分析已停止")
 
     def _processing_loop(self):
@@ -736,6 +731,15 @@ class StateEstimationService:
         # 人脸距离状态离散值
         distance_value = random.choices([0, 1, 2], weights=[0.88, 0.08, 0.04])[0]
 
+        # 模拟人数 — 90%单人，5%无人，5%多人
+        people_rand = random.random()
+        if people_rand < 0.05:
+            num_face_value = 0  # 无人
+        elif people_rand < 0.10:
+            num_face_value = random.randint(2, 3)  # 多人
+        else:
+            num_face_value = 1  # 单人
+
         features = {
             # 头部姿态 — {pitch, yaw, roll, confidence}
             "head_pose": {
@@ -769,6 +773,11 @@ class StateEstimationService:
                 "value": random.random() < 0.03,
                 "confidence": random.uniform(0.85, 1.0),
             },
+            # 画面人脸总数 — {value: int, confidence}
+            "num_face_total": {
+                "value": num_face_value,
+                "confidence": random.uniform(0.9, 1.0),
+            },
         }
 
         return timestamp, face_id, features
@@ -790,6 +799,7 @@ class StateEstimationService:
             attention_state=features.get("attention_state", {}),
             face_distance_state=features.get("face_distance_state", {}),
             is_yawning=features.get("is_yawning", {}),
+            num_face_total=features.get("num_face_total", {"value": 1, "confidence": 1.0}),
         )
 
     # ================================================================
@@ -855,5 +865,6 @@ class StateEstimationService:
         self._stop_processing()
         self._session_manager.clear_sessions()
         self._estimator.reset()
+        self._downsampler.reset()
         self._mock_records_cache.clear()
         self._log("状态估计服务已重置")

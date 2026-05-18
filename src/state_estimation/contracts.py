@@ -57,6 +57,7 @@ class FocusResultData:
         people_score: 人数项评分 [0, 100]
         final_focus_score: 最终专注度评分 [0, 100]
         is_force_zero: 是否因累计异常强制置0
+        is_over_threshold: 人数异常累计次数是否超过阈值
         warn_msg: 告警信息（可选）
     """
     timestamp: float
@@ -68,6 +69,7 @@ class FocusResultData:
     people_score: float
     final_focus_score: float
     is_force_zero: bool
+    is_over_threshold: bool = False
     warn_msg: Optional[WarnInfo] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -82,6 +84,7 @@ class FocusResultData:
             "people_score": self.people_score,
             "final_focus_score": self.final_focus_score,
             "is_force_zero": self.is_force_zero,
+            "is_over_threshold": self.is_over_threshold,
             "warn_info": {
                 "type": self.warn_msg.warn_type,
                 "detail": self.warn_msg.detail,
@@ -134,6 +137,7 @@ class FeatureData:
         attention_state: 注意力状态 {value: int(0=focused,1=distracted,2=sleepy,3=absent), confidence}
         face_distance_state: 人脸距离 {value: int(0=normal,1=too_far,2=too_close), confidence}
         is_yawning: 哈欠检测 {value: bool, confidence}
+        num_face_total: 画面人脸总数 {value: int, confidence}
     """
     timestamp: float
     face_id: int
@@ -143,20 +147,5 @@ class FeatureData:
     attention_state: Dict[str, Any]
     face_distance_state: Dict[str, Any]
     is_yawning: Dict[str, Any]
+    num_face_total: Dict[str, Any] = field(default_factory=lambda: {"value": 1, "confidence": 1.0})
 
-
-@dataclass
-class EstimationStats:
-    """
-    状态估计统计信息
-    
-    Attributes:
-        total_frames_processed: 处理的总帧数
-        avg_focus_score: 平均专注度评分
-        total_abnormal_events: 异常事件总数
-        current_session_id: 当前会话ID（如有）
-    """
-    total_frames_processed: int = 0
-    avg_focus_score: float = 0.0
-    total_abnormal_events: int = 0
-    current_session_id: Optional[str] = None
