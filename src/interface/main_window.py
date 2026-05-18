@@ -177,6 +177,7 @@ class MainWindow(QMainWindow):
         self.left_sidebar.camera_selected.connect(self.on_camera_selected)
         self.left_sidebar.refresh_requested.connect(self.on_refresh_camera_list)
         self.left_sidebar.face_selected.connect(self.on_face_selected)
+        self.left_sidebar.face_delete_requested.connect(self.on_delete_face)
         self.left_sidebar.show_bbox_toggled.connect(self.video_widget.set_show_face_boxes)
         self.video_widget.frame_updated.connect(self.on_video_frame_updated)
         self.top_nav.register_face_clicked.connect(self.on_register_face_clicked)
@@ -310,6 +311,7 @@ class MainWindow(QMainWindow):
         self.top_nav_query.set_recording(True)
         self.top_nav.set_mode_buttons_enabled(False)
         self.top_nav_query.set_mode_buttons_enabled(False)
+        self.left_sidebar.set_faces_enabled(False)
 
     def on_stop_analysis(self):
         print("[MainWindow] 停止分析")
@@ -326,6 +328,7 @@ class MainWindow(QMainWindow):
         self.top_nav_query.set_recording(False)
         self.top_nav.set_mode_buttons_enabled(True)
         self.top_nav_query.set_mode_buttons_enabled(True)
+        self.left_sidebar.set_faces_enabled(True)
 
     def on_camera_selected(self, device_id: int):
         """用户选择摄像头"""
@@ -371,6 +374,57 @@ class MainWindow(QMainWindow):
 
         result = interface_manager.register_face(name, frames, storage_type)
         print(f"[MainWindow] register_face 结果: {result}")
+
+    def on_delete_face(self, face_id: str):
+        """删除人脸：确认 → 删除 → 刷新列表"""
+        if not face_id:
+            return
+
+        # 从 _faces_data 获取 student_name 用于确认提示
+        student_name = face_id
+        for f in self.left_sidebar._faces_data:
+            if f.get("face_id") == face_id:
+                student_name = f.get("student_name", face_id)
+                break
+
+        confirm_box = QMessageBox()
+        confirm_box.setWindowTitle("确认删除")
+        confirm_box.setText(f"确定删除学生「{student_name}」的人脸注册信息吗？")
+        confirm_box.setIcon(QMessageBox.Question)
+        confirm_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        confirm_box.setDefaultButton(QMessageBox.No)
+        confirm_box.setStyleSheet("""
+            QMessageBox {
+                background-color: #FFFFFF;
+                color: #000000;
+            }
+            QLabel {
+                color: #000000;
+                background-color: #FFFFFF;
+            }
+            QPushButton {
+                color: #000000;
+                background-color: #E0E0E0;
+                border: 1px solid #AAAAAA;
+                border-radius: 4px;
+                padding: 6px 16px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #D0D0D0;
+            }
+        """)
+        if confirm_box.exec_() != QMessageBox.Yes:
+            return
+
+        print(f"[MainWindow] 删除人脸: face_id={face_id}, name={student_name}")
+        result = unified_data_manager.delete_face(face_id)
+        if result.get("success"):
+            self.refresh_face_list()
+            self._msg("info", "删除成功", f"已删除「{student_name}」的人脸注册信息")
+        else:
+            self._msg("warning", "删除失败",
+                      result.get("msg", "未知错误"))
 
     def on_alert_info_clicked(self, session_data: dict):
         """查看告警信息"""

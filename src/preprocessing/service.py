@@ -81,6 +81,8 @@ class PreprocessingService:
             )
         if command == "query_face_registry":
             return self.query_face_registry()
+        if command == "delete_face":
+            return self.delete_face(str(params.get("face_id", "")))
         return {"success": False, "msg": f"Unsupported command: {command}"}
 
     def start_camera(self, device_id: int = 0) -> Dict[str, Any]:
@@ -185,6 +187,15 @@ class PreprocessingService:
             ]
         faces.sort(key=lambda item: item.get("registered_at", 0.0))
         return {"success": True, "faces": faces}
+
+    def delete_face(self, face_id: str) -> Dict[str, Any]:
+        with self._face_registry_lock:
+            if face_id in self._face_registry:
+                del self._face_registry[face_id]
+                print(f"[PreprocessingService] 已从内存注册表删除人脸: {face_id}")
+                return {"success": True, "deleted_face_id": face_id}
+            return {"success": False, "deleted_face_id": face_id,
+                    "msg": f"face_id 不在注册表中: {face_id}"}
 
     def register_face(
         self, student_name: str, frames: List[np.ndarray], storage_type: str, face_id: str

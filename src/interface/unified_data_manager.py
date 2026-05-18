@@ -320,6 +320,17 @@ class UnifiedDataManager:
                  "registered_at": f.get("registered_at", 0)}
                 for f in faces]
 
+    def delete_face(self, face_id: str) -> Dict[str, Any]:
+        """删除已注册人脸：通知预处理 + 删数据库"""
+        print(f"[UnifiedDataManager] 删除人脸: {face_id}")
+        if self._database_source == DataSource.REAL:
+            interface_manager.delete_face(face_id)
+            db_result = database_service.delete_face(face_id)
+            print(f"[UnifiedDataManager] 删除结果: {db_result}")
+            return db_result
+        else:
+            return mock_data_manager.delete_face(face_id)
+
     def generate_records(self, face_id: str, count: Optional[int] = None) -> List[Dict[str, Any]]:
         if self._database_source == DataSource.REAL:
             return []

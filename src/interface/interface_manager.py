@@ -460,6 +460,13 @@ class InterfaceManager:
             return self._preprocessing_callback("query_face_registry", {})
         return {"success": False, "faces": [], "msg": "预处理模块未连接"}
 
+    def delete_face(self, face_id: str) -> Dict[str, Any]:
+        """指令：删除已注册人脸，通知预处理模块清除内存注册表"""
+        print(f"[InterfaceManager] 删除人脸: face_id={face_id}")
+        if self._preprocessing_callback:
+            return self._preprocessing_callback("delete_face", {"face_id": face_id})
+        return {"success": True, "msg": "预处理模块未连接，仅清除数据库"}
+
     def set_preprocessing_callback(self, callback: Callable[[str, Dict], Optional[Dict]]):
         """设置预处理模块回调（用于指令下发）"""
         self._preprocessing_callback = callback
