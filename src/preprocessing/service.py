@@ -3,11 +3,15 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import cv2
+import numpy as np
 
-from .pipeline import PipelineConfig, PreprocessingPipeline
+from .contracts import FeatureFramePacket, MatchedFace, TrackedFace, UIFramePacket
+from .database_backend import PreprocessingDatabaseBackend
+from .pipeline import FaceDetector, PipelineConfig, PreprocessingPipeline
+from .recognition import FaceEmbeddingExtractor, best_similarity, summarize_pose_types
 from .video_source import VideoSource
 
 
@@ -17,6 +21,7 @@ LogCallback = Callable[[str], None]
 VideoFrameCallback = Callable[[Any, List[Dict[str, Any]], float], None]
 FrameReceivedCallback = Callable[[Dict[str, Any]], None]
 CameraListCallback = Callable[[List[Dict[str, Any]]], None]
+EmbeddingWriter = Callable[[str, str, List[Tuple[bytes, str]]], bool]
 
 
 class PreprocessingService:
@@ -41,17 +46,41 @@ class PreprocessingService:
         self._stop_event = threading.Event()
         self._worker: Optional[threading.Thread] = None
         self._active_source: Optional[Dict[str, Any]] = None
+        self._monitored_faces: List[str] = []
+        self._face_registry: Dict[str, Dict[str, Any]] = {}
+        self._face_registry_lock = threading.Lock()
+        self._face_embedding_writer: Optional[EmbeddingWriter] = None
+        self._database_backend = PreprocessingDatabaseBackend()
+        self._embedding_extractor = FaceEmbeddingExtractor()
+        self._registration_detector = FaceDetector((config or PipelineConfig()).min_face_size)
+        self._match_threshold = 0.6
+        self._last_owner_face_id: Any = -1
+        self._initialize_database_backend()
 
     def handle_command(self, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
         if command == "toggle_capture":
             return self.on_control_capture(
                 device_id=int(params.get("device_id", 0)),
                 start=bool(params.get("start", False)),
+                monitored_faces=params.get("monitored_faces") or [],
             )
         if command == "load_video":
             return self.on_load_video(file_path=params.get("file_path"))
+        if command == "load_video_file":
+            return self.on_load_video(file_path=params.get("file_path"))
         if command == "query_cameras":
             return self.on_query_cameras()
+        if command == "refresh_camera_list":
+            return self.on_query_cameras()
+        if command == "register_face":
+            return self.register_face(
+                student_name=str(params.get("student_name", "")),
+                frames=list(params.get("frames") or []),
+                storage_type=str(params.get("storage_type", "temp")),
+                face_id=str(params.get("face_id", "")),
+            )
+        if command == "query_face_registry":
+            return self.query_face_registry()
         return {"success": False, "msg": f"Unsupported command: {command}"}
 
     def start_camera(self, device_id: int = 0) -> Dict[str, Any]:
@@ -100,7 +129,10 @@ class PreprocessingService:
     def query_camera_list(self) -> List[Dict[str, Any]]:
         return self.list_cameras()
 
-    def on_control_capture(self, device_id: int, start: bool) -> Dict[str, Any]:
+    def on_control_capture(
+        self, device_id: int, start: bool, monitored_faces: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        self._monitored_faces = list(monitored_faces or [])
         return self.start_camera(device_id) if start else self.stop_camera()
 
     def on_load_video(self, file_path: str | Path | None) -> Dict[str, Any]:
@@ -124,6 +156,51 @@ class PreprocessingService:
     def register_camera_list_callback(self, callback: CameraListCallback) -> None:
         self.camera_list_callback = callback
 
+    def set_face_embedding_writer(self, callback: EmbeddingWriter) -> None:
+        self._face_embedding_writer = callback
+
+    def load_faces_from_db(self, faces_data: List[Dict[str, Any]]) -> None:
+        with self._face_registry_lock:
+            for face in faces_data:
+                self._face_registry[face["face_id"]] = {
+                    "student_name": face["student_name"],
+                    "embeddings": [
+                        np.frombuffer(item["embedding"], dtype=np.float32)
+                        for item in face.get("embeddings", [])
+                    ],
+                    "storage_type": face.get("storage_type", "local"),
+                    "registered_at": face["registered_at"],
+                }
+
+    def query_face_registry(self) -> Dict[str, Any]:
+        with self._face_registry_lock:
+            faces = [
+                {
+                    "face_id": face_id,
+                    "student_name": entry["student_name"],
+                    "storage_type": entry["storage_type"],
+                    "registered_at": entry["registered_at"],
+                }
+                for face_id, entry in self._face_registry.items()
+            ]
+        faces.sort(key=lambda item: item.get("registered_at", 0.0))
+        return {"success": True, "faces": faces}
+
+    def register_face(
+        self, student_name: str, frames: List[np.ndarray], storage_type: str, face_id: str
+    ) -> Dict[str, Any]:
+        if not student_name or not frames or not face_id:
+            return {"success": False, "face_id": face_id, "msg": "invalid params"}
+        self.pipeline.stats.registration_requests += 1
+        worker = threading.Thread(
+            target=self._register_face_task,
+            args=(student_name, frames, storage_type, face_id),
+            name=f"FaceRegistration-{face_id}",
+            daemon=True,
+        )
+        worker.start()
+        return {"success": True, "face_id": face_id, "msg": "processing"}
+
     def get_status(self) -> Dict[str, Any]:
         stats = self.pipeline.stats
         return {
@@ -136,6 +213,8 @@ class PreprocessingService:
             "detection_failures": stats.detection_failures,
             "recovery_count": stats.recovery_count,
             "last_error": stats.last_error,
+            "registry_size": len(self._face_registry),
+            "monitored_faces": list(self._monitored_faces),
         }
 
     def _start_worker(self) -> None:
@@ -157,8 +236,15 @@ class PreprocessingService:
             if result is None:
                 continue
 
-            ui_packet = result["ui"].to_dict()
-            feature_packet = result["feature"].to_dict()
+            matched_faces = self._match_faces(result["tracked_faces"])
+            owner_face_id, owner_face_matched = self._select_owner_face(
+                matched_faces, result["frame"].shape, has_registered_faces=bool(self._face_registry)
+            )
+            ui_packet = self._build_ui_packet(result["frame"], result["timestamp"], matched_faces).to_dict()
+            feature_packet = self._build_feature_packet(
+                result["frame"], result["timestamp"], matched_faces, owner_face_id, owner_face_matched
+            ).to_dict()
+            self._log_recognition_result(feature_packet)
             self._dispatch_ui_packet(ui_packet)
             self._dispatch_feature_packet(feature_packet)
 
@@ -175,6 +261,301 @@ class PreprocessingService:
             self.feature_callback(feature_packet)
         if self.frame_received_callback is not None:
             self.frame_received_callback(feature_packet)
+
+    def _log_recognition_result(self, feature_packet: Dict[str, Any]) -> None:
+        faces = feature_packet.get("faces", []) or []
+        owner_face_id = feature_packet.get("owner_face_id", -1)
+        owner_face_matched = feature_packet.get("face_matched", False)
+        timestamp = feature_packet.get("timestamp", 0.0)
+
+        if not faces:
+            self.log_callback(
+                f"[Preprocessing][PRI-02] ts={timestamp:.3f} "
+                f"owner_face_id={owner_face_id} face_matched={owner_face_matched} faces=[]"
+            )
+            return
+
+        owner_face = next(
+            (face for face in faces if face.get("face_id") == owner_face_id),
+            faces[0] if faces else None,
+        )
+        if owner_face is None:
+            self.log_callback(
+                f"[Preprocessing][PRI-02] ts={timestamp:.3f} "
+                f"owner_face_id={owner_face_id} face_matched={owner_face_matched} "
+                f"faces_count={len(faces)}"
+            )
+            return
+
+        self.log_callback(
+            f"[Preprocessing][PRI-02] ts={timestamp:.3f} "
+            f"owner_face_id={owner_face_id} "
+            f"face_matched={owner_face_matched} "
+            f"student_name={owner_face.get('student_name', 'unknown')} "
+            f"confidence={float(owner_face.get('confidence', 0.0)):.3f} "
+            f"faces_count={len(faces)}"
+        )
+
+    def _register_face_task(
+        self, student_name: str, frames: List[np.ndarray], storage_type: str, face_id: str
+    ) -> None:
+        try:
+            embeddings = self._extract_embeddings_from_frames(frames)
+            if not embeddings:
+                self.pipeline.stats.registration_failures += 1
+                self._emit_face_registration_result(
+                    success=False,
+                    face_id=face_id,
+                    student_name=student_name,
+                    msg="未提取到有效人脸特征",
+                    embeddings_count=0,
+                )
+                return
+
+            with self._face_registry_lock:
+                self._face_registry[face_id] = {
+                    "student_name": student_name,
+                    "embeddings": [embedding for embedding, _ in embeddings],
+                    "storage_type": storage_type,
+                    "registered_at": time.time(),
+                }
+
+            if storage_type == "local":
+                payload = [
+                    (embedding.astype(np.float32).tobytes(), pose_type)
+                    for embedding, pose_type in embeddings
+                ]
+                ok = False
+                if self._face_embedding_writer is not None:
+                    ok = self._face_embedding_writer(face_id, student_name, payload)
+                if not ok:
+                    ok = self._database_backend.insert_face_embeddings_batch(
+                        face_id=face_id,
+                        student_name=student_name,
+                        embeddings=payload,
+                        registered_at=self._face_registry[face_id]["registered_at"],
+                    )
+                if not ok:
+                    self.pipeline.stats.registration_failures += 1
+                    self._emit_face_registration_result(
+                        success=False,
+                        face_id=face_id,
+                        student_name=student_name,
+                        msg="注册写入数据库失败",
+                        embeddings_count=len(embeddings),
+                    )
+                    return
+
+            self.pipeline.stats.registration_successes += 1
+            self._emit_face_registration_result(
+                success=True,
+                face_id=face_id,
+                student_name=student_name,
+                msg="注册成功",
+                embeddings_count=len(embeddings),
+            )
+        except Exception as exc:
+            self.pipeline.stats.registration_failures += 1
+            self.log_callback(f"register_face failed: {exc}")
+            self._emit_face_registration_result(
+                success=False,
+                face_id=face_id,
+                student_name=student_name,
+                msg=str(exc),
+                embeddings_count=0,
+            )
+
+    def _extract_embeddings_from_frames(
+        self, frames: Sequence[np.ndarray]
+    ) -> List[Tuple[np.ndarray, str]]:
+        pose_types = summarize_pose_types(len(frames))
+        valid_embeddings: List[Tuple[np.ndarray, str]] = []
+        for frame, pose_type in zip(frames, pose_types):
+            if frame is None or getattr(frame, "size", 0) == 0:
+                continue
+            detections = self._registration_detector.detect(frame, self.pipeline.config.roi_size)
+            best = self._pick_best_detection(detections, frame.shape)
+            if best is None:
+                continue
+            embedding = self._embedding_extractor.extract(best.face_roi)
+            if embedding is None:
+                continue
+            valid_embeddings.append((embedding, pose_type))
+        return valid_embeddings
+
+    def _pick_best_detection(
+        self, detections: Sequence[Any], frame_shape: Tuple[int, ...]
+    ) -> Optional[Any]:
+        if not detections:
+            return None
+        frame_h, frame_w = frame_shape[:2]
+        center = np.array([frame_w / 2.0, frame_h / 2.0])
+
+        def score(detection: Any) -> float:
+            x, y, w, h = detection.bbox
+            area = (w * h) / max(frame_h * frame_w, 1)
+            det_center = np.array([x + w / 2.0, y + h / 2.0])
+            distance = np.linalg.norm(det_center - center)
+            center_score = 1.0 - min(distance / max(frame_h, frame_w), 1.0)
+            return area * 0.7 + center_score * 0.2 + float(detection.confidence) * 0.1
+
+        return max(detections, key=score)
+
+    def _emit_face_registration_result(
+        self, success: bool, face_id: str, student_name: str, msg: str, embeddings_count: int
+    ) -> None:
+        packet = {
+            "type": "face_registration_result",
+            "success": success,
+            "face_id": face_id,
+            "student_name": student_name,
+            "msg": msg,
+            "embeddings_count": embeddings_count,
+        }
+        if self.ui_callback is not None:
+            self.ui_callback(packet)
+
+    def _snapshot_registry(self) -> Dict[str, Dict[str, Any]]:
+        with self._face_registry_lock:
+            return {
+                face_id: {
+                    "student_name": entry["student_name"],
+                    "embeddings": list(entry["embeddings"]),
+                    "storage_type": entry["storage_type"],
+                    "registered_at": entry["registered_at"],
+                }
+                for face_id, entry in self._face_registry.items()
+            }
+
+    def _initialize_database_backend(self) -> None:
+        try:
+            self._database_backend.initialize()
+            faces_data = self._database_backend.load_all_face_embeddings()
+            if faces_data:
+                self.load_faces_from_db(faces_data)
+        except Exception as exc:
+            self.log_callback(f"database backend init failed: {exc}")
+
+    def _match_faces(self, tracked_faces: Sequence[TrackedFace]) -> List[MatchedFace]:
+        registry = self._snapshot_registry()
+        matched_faces: List[MatchedFace] = []
+        for face in tracked_faces:
+            if not face.is_live:
+                continue
+            embedding = self._embedding_extractor.extract(face.face_roi)
+            best_face_id = None
+            best_student_name = "unknown"
+            best_score = 0.0
+            for face_id, entry in registry.items():
+                score = best_similarity(embedding, entry["embeddings"])
+                if score > best_score:
+                    best_score = score
+                    best_face_id = face_id
+                    best_student_name = entry["student_name"]
+
+            is_allowed = (
+                not self._monitored_faces or
+                (best_face_id is not None and best_face_id in self._monitored_faces)
+            )
+            face_matched = bool(best_face_id and best_score >= self._match_threshold and is_allowed)
+            public_face_id: Any = best_face_id if face_matched else f"track_{face.track_id}"
+            student_name = best_student_name if face_matched else "unknown"
+
+            matched_faces.append(
+                MatchedFace(
+                    track_id=face.track_id,
+                    face_id=public_face_id,
+                    student_name=student_name,
+                    bbox=face.bbox,
+                    face_roi=face.face_roi,
+                    confidence=best_score if face_matched else 0.0,
+                    face_matched=face_matched,
+                    tracking_score=face.tracking_score,
+                    embedding=embedding,
+                )
+            )
+        return matched_faces
+
+    def _select_owner_face(
+        self, faces: Sequence[MatchedFace], shape: Tuple[int, ...], has_registered_faces: bool
+    ) -> Tuple[Any, bool]:
+        if not faces:
+            self._last_owner_face_id = -1
+            return -1, False
+
+        if self._monitored_faces:
+            monitored_matches = [
+                face for face in faces
+                if face.face_matched and str(face.face_id) in self._monitored_faces
+            ]
+            if monitored_matches:
+                best = max(monitored_matches, key=lambda face: face.confidence)
+                self._last_owner_face_id = best.face_id
+                return best.face_id, best.face_matched
+
+        if not has_registered_faces and len(faces) == 1 and not faces[0].face_matched:
+            best = faces[0]
+            self._last_owner_face_id = best.face_id
+            return best.face_id, False
+
+        frame_h, frame_w = shape[:2]
+        frame_center = np.array([frame_w / 2.0, frame_h / 2.0])
+        best = None
+        best_score = None
+        for face in faces:
+            x, y, w, h = face.bbox
+            area_score = (w * h) / max(float(frame_w * frame_h), 1.0)
+            face_center = np.array([x + w / 2.0, y + h / 2.0])
+            distance = np.linalg.norm(face_center - frame_center)
+            center_score = 1.0 - min(distance / max(frame_w, frame_h), 1.0)
+            continuity_bonus = 0.2 if face.face_id == self._last_owner_face_id else 0.0
+            identity_bonus = 0.2 if face.face_matched else 0.0
+            score = area_score * 0.45 + center_score * 0.2 + face.tracking_score * 0.15 + identity_bonus + continuity_bonus
+            if best is None or score > best_score:
+                best = face
+                best_score = score
+        self._last_owner_face_id = best.face_id if best is not None else -1
+        return (best.face_id, best.face_matched) if best is not None else (-1, False)
+
+    def _build_ui_packet(
+        self, frame: np.ndarray, timestamp: float, faces: Sequence[MatchedFace]
+    ) -> UIFramePacket:
+        ui_faces = [
+            {
+                "face_id": face.face_id,
+                "bbox": list(face.bbox),
+                "student_name": face.student_name,
+                "face_matched": face.face_matched,
+            }
+            for face in faces
+        ]
+        return UIFramePacket(frame=frame, faces=ui_faces, timestamp=timestamp)
+
+    def _build_feature_packet(
+        self,
+        frame: np.ndarray,
+        timestamp: float,
+        faces: Sequence[MatchedFace],
+        owner_face_id: Any,
+        owner_face_matched: bool,
+    ) -> FeatureFramePacket:
+        feature_faces = [
+            {
+                "face_id": face.face_id,
+                "student_name": face.student_name,
+                "face_roi": face.face_roi,
+                "confidence": face.confidence,
+                "face_matched": face.face_matched,
+            }
+            for face in faces
+        ]
+        return FeatureFramePacket(
+            timestamp=timestamp,
+            faces=feature_faces,
+            owner_face_id=owner_face_id,
+            frame=frame,
+            face_matched=owner_face_matched,
+        )
 
 
 class PreprocessingCommandAdapter:

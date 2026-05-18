@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
 
-from .contracts import DetectionResult, FeatureFramePacket, FrameContext, PreprocessingStats, TrackedFace, UIFramePacket
+from .contracts import DetectionResult, FrameContext, PreprocessingStats, TrackedFace
 from .face_tracker import SimpleFaceTracker
 from .liveness import HeuristicLivenessDetector
 
@@ -29,17 +31,65 @@ class PipelineConfig:
 
 
 class FaceDetector:
-    def __init__(self, min_face_size: int):
+    def __init__(self, min_face_size: int, yolo_model_path: str | Path = "yolov8-face.pt"):
         self.min_face_size = min_face_size
+        self._yolo = None
+        self._init_yolo(yolo_model_path)
         self._mtcnn = MTCNN() if MTCNN is not None else None
         self._cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
     def detect(self, frame: np.ndarray, roi_size: Tuple[int, int]) -> List[DetectionResult]:
+        if self._yolo is not None:
+            detections = self._detect_with_yolo(frame, roi_size)
+            if detections:
+                return detections
         if self._mtcnn is not None:
             detections = self._detect_with_mtcnn(frame, roi_size)
             if detections:
                 return detections
         return self._detect_with_cascade(frame, roi_size)
+
+    def _init_yolo(self, yolo_model_path: str | Path) -> None:
+        model_path = Path(yolo_model_path)
+        if not model_path.exists():
+            return
+        try:
+            os.environ.setdefault(
+                "YOLO_CONFIG_DIR",
+                str(Path(__file__).resolve().parents[2] / ".ultralytics"),
+            )
+            from ultralytics import YOLO
+
+            self._yolo = YOLO(str(model_path))
+        except Exception:
+            self._yolo = None
+
+    def _detect_with_yolo(self, frame: np.ndarray, roi_size: Tuple[int, int]) -> List[DetectionResult]:
+        results = self._yolo.predict(source=frame, verbose=False, device="cpu")
+        detections: List[DetectionResult] = []
+        if not results:
+            return detections
+        boxes = getattr(results[0], "boxes", None)
+        if boxes is None:
+            return detections
+        xyxy = boxes.xyxy.cpu().numpy() if hasattr(boxes.xyxy, "cpu") else boxes.xyxy
+        confs = boxes.conf.cpu().numpy() if hasattr(boxes.conf, "cpu") else boxes.conf
+        for box, confidence in zip(xyxy, confs):
+            x1, y1, x2, y2 = [int(v) for v in box[:4]]
+            w = max(0, x2 - x1)
+            h = max(0, y2 - y1)
+            if min(w, h) < self.min_face_size:
+                continue
+            bbox = self._clip_bbox((x1, y1, w, h), frame.shape)
+            face_roi = self._extract_roi(frame, bbox, roi_size)
+            detections.append(
+                DetectionResult(
+                    bbox=bbox,
+                    confidence=float(confidence),
+                    face_roi=face_roi,
+                )
+            )
+        return detections
 
     def _detect_with_mtcnn(self, frame: np.ndarray, roi_size: Tuple[int, int]) -> List[DetectionResult]:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -115,25 +165,13 @@ class PreprocessingPipeline:
             detections = self._detector.detect(frame, self.config.roi_size)
             tracked_faces = self._tracker.update(detections)
             tracked_faces = self._apply_liveness(tracked_faces)
-            owner_face_id = self._select_owner_face_id(tracked_faces, frame.shape)
-
-            ui_faces = [{"face_id": face.face_id, "bbox": list(face.bbox)} for face in tracked_faces]
-            feature_faces = [
-                {"face_id": face.face_id, "face_roi": face.face_roi}
-                for face in tracked_faces
-                if face.is_live
-            ]
 
             self.stats.frames_processed += 1
             self.stats.consecutive_failures = 0
             return {
-                "ui": UIFramePacket(frame=frame, faces=ui_faces, timestamp=context.timestamp),
-                "feature": FeatureFramePacket(
-                    timestamp=context.timestamp,
-                    faces=feature_faces,
-                    owner_face_id=owner_face_id,
-                    frame=frame,
-                ),
+                "frame": frame,
+                "timestamp": context.timestamp,
+                "tracked_faces": tracked_faces,
             }
         except Exception as exc:
             self._record_failure(str(exc))
@@ -161,41 +199,16 @@ class PreprocessingPipeline:
             result = self._liveness.evaluate(face.face_roi)
             updated_faces.append(
                 TrackedFace(
-                    face_id=face.face_id,
+                    track_id=face.track_id,
                     bbox=face.bbox,
                     confidence=face.confidence,
                     face_roi=face.face_roi,
                     is_live=result.is_live,
                     tracking_score=min(1.0, (face.tracking_score + result.score) / 2.0),
+                    embedding=face.embedding,
                 )
             )
         return updated_faces
-
-    def _select_owner_face_id(self, faces: Sequence[TrackedFace], shape: Tuple[int, ...]) -> int:
-        live_faces = [face for face in faces if face.is_live]
-        if not live_faces:
-            self._owner_face_id = -1
-            return -1
-
-        frame_h, frame_w = shape[:2]
-        frame_center = np.array([frame_w / 2.0, frame_h / 2.0])
-        best_face = None
-        best_score = None
-
-        for face in live_faces:
-            x, y, w, h = face.bbox
-            area_score = (w * h) / float(frame_w * frame_h)
-            face_center = np.array([x + w / 2.0, y + h / 2.0])
-            distance = np.linalg.norm(face_center - frame_center)
-            center_score = 1.0 - min(distance / max(frame_w, frame_h), 1.0)
-            continuity_bonus = 0.2 if face.face_id == self._owner_face_id else 0.0
-            score = area_score * 0.55 + center_score * 0.25 + face.tracking_score * 0.20 + continuity_bonus
-            if best_face is None or score > best_score:
-                best_face = face
-                best_score = score
-
-        self._owner_face_id = best_face.face_id if best_face is not None else -1
-        return self._owner_face_id
 
     def _record_failure(self, message: str) -> None:
         self.stats.detection_failures += 1

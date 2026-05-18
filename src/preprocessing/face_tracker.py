@@ -50,7 +50,7 @@ class SimpleFaceTracker:
             tracking_score = max(0.0, 1.0 - self._distance(track.center, center) / max(self.max_distance, 1.0))
             tracked_faces.append(
                 TrackedFace(
-                    face_id=track.face_id,
+                    track_id=track.face_id,
                     bbox=bbox,
                     confidence=detection.confidence,
                     face_roi=detection.face_roi,
