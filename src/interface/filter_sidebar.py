@@ -40,6 +40,7 @@ class FilterSidebar(QFrame):
 
         filter_layout.addWidget(self._create_date_section())
         filter_layout.addWidget(self._create_mode_section())
+        filter_layout.addWidget(self._create_face_id_section())
         filter_layout.addWidget(self._create_focus_section())
         filter_layout.addWidget(self._create_abnormal_section())
 
@@ -127,6 +128,22 @@ class FilterSidebar(QFrame):
         self.mode_combo.setStyleSheet(get_style("combo_box"))
         self.mode_combo.currentTextChanged.connect(self.on_filter_changed)
         layout.addWidget(self.mode_combo)
+        return widget
+
+    def _create_face_id_section(self):
+        widget = QWidget()
+        widget.setStyleSheet(get_style("filter_group_wrapper"))
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(get_spacing("tight"))
+
+        layout.addWidget(self._section_label("人脸 ID"))
+
+        self.face_id_combo = QComboBox()
+        self.face_id_combo.addItem("全部人脸", None)
+        self.face_id_combo.setFont(QFont(*get_font("sm")))
+        self.face_id_combo.setStyleSheet(get_style("combo_box"))
+        layout.addWidget(self.face_id_combo)
         return widget
 
     def _create_focus_section(self):
@@ -252,10 +269,12 @@ class FilterSidebar(QFrame):
     def on_apply_clicked(self):
         idx = self.mode_combo.currentIndex()
         mode_value = self._mode_values[idx] if idx > 0 else None
+        face_id_data = self.face_id_combo.currentData()
         filter_params = {
             "start_date": self.start_date_edit.date().toString("yyyy-MM-dd"),
             "end_date": self.end_date_edit.date().toString("yyyy-MM-dd"),
             "mode": mode_value,
+            "face_id": face_id_data,
             "focus_min": self.focus_min_spin.value(),
             "focus_max": self.focus_max_spin.value(),
             "abnormal_min": self.abnormal_min_spin.value(),
@@ -267,10 +286,12 @@ class FilterSidebar(QFrame):
     def get_current_filter(self):
         idx = self.mode_combo.currentIndex()
         mode_value = self._mode_values[idx] if idx > 0 else None
+        face_id_data = self.face_id_combo.currentData()
         return {
             "start_date": self.start_date_edit.date().toString("yyyy-MM-dd"),
             "end_date": self.end_date_edit.date().toString("yyyy-MM-dd"),
             "mode": mode_value,
+            "face_id": face_id_data,
             "focus_min": self.focus_min_spin.value(),
             "focus_max": self.focus_max_spin.value(),
             "abnormal_min": self.abnormal_min_spin.value(),
@@ -286,6 +307,20 @@ class FilterSidebar(QFrame):
             "evidence": self.show_evidence.isChecked(),
             "people": self.show_people.isChecked(),
         }
+
+    def refresh_face_list(self, face_ids: list):
+        """刷新人脸 ID 下拉选项"""
+        current_data = self.face_id_combo.currentData()
+        self.face_id_combo.blockSignals(True)
+        self.face_id_combo.clear()
+        self.face_id_combo.addItem("全部人脸", None)
+        for fid in face_ids:
+            self.face_id_combo.addItem(fid, fid)
+        # 恢复之前选中的项
+        idx = self.face_id_combo.findData(current_data)
+        if idx >= 0:
+            self.face_id_combo.setCurrentIndex(idx)
+        self.face_id_combo.blockSignals(False)
 
     def on_chart_option_changed(self):
         self.chart_options_changed.emit(self.get_chart_options())

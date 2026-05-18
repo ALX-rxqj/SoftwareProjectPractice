@@ -1,8 +1,10 @@
+from typing import Optional
+
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QFrame, QVBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QWidget, QHBoxLayout, QPushButton,
+    QWidget, QHBoxLayout, QPushButton, QCheckBox,
 )
 
 from .config import LEFT_BAR_WIDTH
@@ -13,6 +15,8 @@ from .styles.effects import create_card_shadow
 class LeftSideBar(QFrame):
     camera_selected = pyqtSignal(int)
     refresh_requested = pyqtSignal()
+    face_selected = pyqtSignal(str)
+    show_bbox_toggled = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -21,6 +25,7 @@ class LeftSideBar(QFrame):
         self.setGraphicsEffect(create_card_shadow(elevated=True))
         self._cameras = []
         self._current_device_id = 0
+        self._faces_data = []
         self.init_ui()
 
     def init_ui(self):
@@ -65,24 +70,23 @@ class LeftSideBar(QFrame):
         face_title.setStyleSheet(get_style("label_section_title"))
         self.face_list = QListWidget()
         self.face_list.setStyleSheet(get_style("list_widget"))
+        self.face_list.setSelectionMode(QListWidget.SingleSelection)
+        self.face_list.setCursor(Qt.PointingHandCursor)
+        self.face_list.itemClicked.connect(self._on_face_item_clicked)
         layout.addWidget(face_title)
         layout.addWidget(self.face_list)
         layout.addStretch()
 
-        # ---- 底部状态栏 ----
-        bottom_status = QHBoxLayout()
-        self.status_dot = QFrame()
-        self.status_dot.setFixedSize(8, 8)
-        self.status_dot.setStyleSheet(get_style("dot_success"))
-        self.status_text_label = QLabel("可视化显示")
-        self.status_text_label.setFont(QFont(*get_font("sm", "normal", "ui")))
-        self.status_text_label.setStyleSheet(
+        # ---- 底部可视化勾选框 ----
+        self.show_bbox_checkbox = QCheckBox("可视化显示")
+        self.show_bbox_checkbox.setChecked(False)
+        self.show_bbox_checkbox.setCursor(Qt.PointingHandCursor)
+        self.show_bbox_checkbox.setFont(QFont(*get_font("sm", "normal", "ui")))
+        self.show_bbox_checkbox.setStyleSheet(
             f"color: {COLORS['text_hint']};"
         )
-        bottom_status.addWidget(self.status_dot)
-        bottom_status.addWidget(self.status_text_label)
-        bottom_status.addStretch()
-        layout.addLayout(bottom_status)
+        self.show_bbox_checkbox.toggled.connect(self.show_bbox_toggled.emit)
+        layout.addWidget(self.show_bbox_checkbox)
 
     def _section_divider(self) -> QFrame:
         divider = QFrame()
@@ -154,6 +158,11 @@ class LeftSideBar(QFrame):
     # ──────────────────── 人脸列表 ────────────────────
 
     def update_faces(self, faces: list):
+        """加载注册人脸列表（来自 query_face_registry / database）
+
+        faces: [{"face_id": str, "student_name": str, ...}, ...]
+        """
+        self._faces_data = list(faces)
         self.face_list.clear()
         for face in faces:
             item = QListWidgetItem()
@@ -165,18 +174,45 @@ class LeftSideBar(QFrame):
                 get_spacing("md"), get_spacing("sm"),
             )
 
-            avatar = self._make_avatar(f"F{face.get('face_id', '?')}")
-            name_label = QLabel(f"人脸 ID: {face.get('face_id', '?')}")
+            student_name = face.get("student_name", face.get("face_id", "?"))
+            face_id = face.get("face_id", "?")
+            avatar = self._make_avatar(student_name)
+            name_label = QLabel(student_name)
             name_label.setFont(QFont(*get_font("base", "medium", "ui")))
             name_label.setStyleSheet(f"color: {COLORS['text']};")
+            id_label = QLabel(f"ID: {face_id}")
+            id_label.setFont(QFont(*get_font("xs", "normal", "data")))
+            id_label.setStyleSheet(f"color: {COLORS['text_hint']};")
 
             item_layout.addWidget(avatar)
             item_layout.addSpacing(get_spacing("md"))
             item_layout.addWidget(name_label)
             item_layout.addStretch()
+            item_layout.addWidget(id_label)
 
+            item.setData(Qt.UserRole, face_id)
             self.face_list.addItem(item)
             self.face_list.setItemWidget(item, item_widget)
+
+        if self.face_list.count() > 0:
+            self.face_list.setCurrentRow(0)
+            first_id = self.face_list.item(0).data(Qt.UserRole)
+            self.face_selected.emit(first_id)
+
+    def get_selected_face_id(self) -> Optional[str]:
+        item = self.face_list.currentItem()
+        if item:
+            return item.data(Qt.UserRole)
+        return None
+
+    def has_faces(self) -> bool:
+        return self.face_list.count() > 0
+
+    def _on_face_item_clicked(self, item):
+        face_id = item.data(Qt.UserRole)
+        self.face_list.setCurrentItem(item)
+        self.face_selected.emit(face_id)
+        print(f"[LeftSideBar] 选择人脸: face_id={face_id}")
 
     # ──────────────────── 事件 ────────────────────
 
@@ -189,16 +225,6 @@ class LeftSideBar(QFrame):
     def set_current_device(self, device_id):
         self._current_device_id = device_id
         self._select_camera_by_device_id(device_id)
-
-    def set_status(self, running: bool, text: str = None):
-        if running:
-            self.status_dot.setStyleSheet(get_style("dot_success"))
-            self.status_text_label.setText("运行中" if not text else text)
-            self.status_text_label.setStyleSheet(f"color: {COLORS['focus_high']};")
-        else:
-            self.status_dot.setStyleSheet(get_style("dot_hint"))
-            self.status_text_label.setText("已停止" if not text else text)
-            self.status_text_label.setStyleSheet(f"color: {COLORS['text_hint']};")
 
     def get_current_device_id(self) -> int:
         return self._current_device_id

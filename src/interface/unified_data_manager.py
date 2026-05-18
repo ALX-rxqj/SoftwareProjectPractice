@@ -11,6 +11,7 @@
   6. 统一管理摄像头列表
 """
 
+import time as _time
 from typing import Callable, Optional, Dict, Any, List
 from enum import Enum
 from dataclasses import dataclass
@@ -69,7 +70,7 @@ class UnifiedDataManager:
         # 各模块独立数据源控制
         self._preprocessing_source: DataSource = DataSource.REAL
         self._state_estimation_source: DataSource = DataSource.MOCK
-        self._database_source: DataSource = DataSource.MOCK
+        self._database_source: DataSource = DataSource.REAL
 
         self._video_frame_callback: Optional[Callable[[VideoFrameData], None]] = None
         self._focus_result_callback: Optional[Callable[[FocusResultData], None]] = None
@@ -96,6 +97,7 @@ class UnifiedDataManager:
         try:
             database_service.initialize(db_path)
             print(f"[UnifiedDataManager] 数据库已初始化: {db_path}")
+            database_service.seed_debug_data()
             return True
         except Exception as e:
             print(f"[UnifiedDataManager] 数据库初始化失败: {e}")
@@ -291,8 +293,28 @@ class UnifiedDataManager:
 
     def generate_face_ids(self) -> List[str]:
         if self._database_source == DataSource.REAL:
-            return []
+            # 优先查询预处理模块内存中的注册表（含临时+持久）
+            result = interface_manager.query_face_registry()
+            if result and result.get("success"):
+                return [f.get("face_id", "") for f in result.get("faces", [])
+                        if f.get("face_id")]
+            # 降级：直接从数据库查询持久人脸
+            faces = database_service.query_registered_faces()
+            return [f.get("face_id", "") for f in faces if f.get("face_id")]
         return mock_data_manager.generate_face_ids()
+
+    def generate_face_ids_with_details(self) -> List[Dict[str, Any]]:
+        """获取已注册人脸列表（含详细信息），用于 UI 展示"""
+        result = interface_manager.query_face_registry()
+        if result and result.get("success"):
+            return result.get("faces", [])
+        # 降级：直接查数据库
+        faces = database_service.query_registered_faces()
+        return [{"face_id": f.get("face_id", ""),
+                 "student_name": f.get("student_name", ""),
+                 "storage_type": "local",
+                 "registered_at": f.get("registered_at", 0)}
+                for f in faces]
 
     def generate_records(self, face_id: str, count: Optional[int] = None) -> List[Dict[str, Any]]:
         if self._database_source == DataSource.REAL:
@@ -330,8 +352,16 @@ class UnifiedDataManager:
             筛选后的会话列表
         """
         if self._database_source == DataSource.REAL:
-            results = database_service.query_sessions(filter_params)
-            # 转换 REAL → str 供界面展示
+            db_params = dict(filter_params)
+            if db_params.get("start_date"):
+                db_params["start_date"] = self._date_str_to_ts(
+                    db_params["start_date"], day_start=True
+                )
+            if db_params.get("end_date"):
+                db_params["end_date"] = self._date_str_to_ts(
+                    db_params["end_date"], day_start=False
+                )
+            results = database_service.query_sessions(db_params)
             for r in results:
                 if r.get("start_time"):
                     r["start_time"] = self._ts_to_str(r["start_time"])
@@ -372,6 +402,20 @@ class UnifiedDataManager:
     def _ts_to_str(ts: float) -> str:
         import datetime
         return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+    @staticmethod
+    def _date_str_to_ts(date_str: str, day_start: bool) -> float:
+        """将 "YYYY-MM-DD" 字符串转为 Unix 时间戳
+
+        Args:
+            date_str: 日期字符串 "YYYY-MM-DD"
+            day_start: True → 当天 00:00:00, False → 当天 23:59:59
+        """
+        import datetime
+        dt = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+        if not day_start:
+            dt = dt.replace(hour=23, minute=59, second=59)
+        return dt.timestamp()
 
     def generate_records_by_session(self, session_id: str, start_time: str, end_time: str) -> List[Dict[str, Any]]:
         print(f"[UnifiedDataManager] 查询会话记录: session_id={session_id}")
@@ -415,12 +459,15 @@ class UnifiedDataManager:
 
     # ──────────────────── 控制指令 ────────────────────
 
-    def toggle_capture(self, device_id: int, start: bool) -> Dict[str, Any]:
+    def toggle_capture(
+        self, device_id: int, start: bool,
+        monitored_faces: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         action = "启动" if start else "停止"
         print(f"[UnifiedDataManager] {action}视频采集, device_id={device_id}")
 
         if self._preprocessing_source == DataSource.REAL:
-            return interface_manager.toggle_capture(device_id, start)
+            return interface_manager.toggle_capture(device_id, start, monitored_faces)
 
         return {"success": True, "msg": f"{action}视频采集指令已发送"}
 
@@ -488,10 +535,22 @@ class UnifiedDataManager:
             )
 
             service = PreprocessingService(
-                video_frame_callback=self._on_preprocessing_video_frame,
+                ui_callback=self._on_preprocessing_ui_packet,
                 camera_list_callback=self._on_preprocessing_camera_list,
                 log_callback=lambda msg: print(f"[Preprocessing] {msg}"),
             )
+
+            # 注入数据库人脸写回调（回调解耦：预处理模块不直接 import 数据库模块）
+            if hasattr(service, "set_face_embedding_writer"):
+                service.set_face_embedding_writer(
+                    lambda face_id, student_name, embeddings:
+                        database_service.insert_face_embeddings_batch(
+                            face_id, student_name, embeddings, _time.time()
+                        )
+                )
+                print("[UnifiedDataManager] 数据库人脸写回调已注入预处理模块")
+            else:
+                print("[UnifiedDataManager] 注意: PreprocessingService 未实现 set_face_embedding_writer")
 
             adapter = PreprocessingCommandAdapter(service)
             interface_manager.set_preprocessing_callback(adapter)
@@ -506,8 +565,23 @@ class UnifiedDataManager:
             print(f"[UnifiedDataManager] 预处理模块初始化失败: {e}")
             return False
 
+    def _on_preprocessing_ui_packet(self, packet: dict):
+        """预处理模块 UI 数据包路由
+
+        通过 type 字段区分：face_registration_result → 异步人脸注册结果，
+        否则 → 视频帧数据（向后兼容）。
+        """
+        ptype = packet.get("type", "")
+        if ptype == "face_registration_result":
+            interface_manager.on_face_registration_result(packet)
+        else:
+            # 向后兼容：无 type 字段时按视频帧处理
+            interface_manager.on_video_frame_received(
+                packet.get("frame"), packet.get("faces", []), packet.get("timestamp", 0.0)
+            )
+
     def _on_preprocessing_video_frame(self, frame, faces, timestamp):
-        """预处理模块视频帧回调 -> 转发至 InterfaceManager"""
+        """预处理模块视频帧回调 -> 转发至 InterfaceManager（保留兼容）"""
         interface_manager.on_video_frame_received(frame, faces, timestamp)
 
     def _on_preprocessing_camera_list(self, camera_list):

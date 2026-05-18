@@ -49,42 +49,111 @@ class DatabaseService:
         print(f"[DatabaseService] 未知命令: {command}")
         return []
 
-    # ────────────────── 人脸注册 ──────────────────
+    # ────────────────── 人脸注册（新架构：主子表） ──────────────────
 
-    def register_face(self, face_id: str, student_name: str, created_at: float) -> bool:
-        """写入已注册人脸记录（预处理模块调用，storage_type='local' 时）
+    def insert_face_embeddings_batch(
+        self, face_id: str, student_name: str,
+        embeddings: List[tuple], registered_at: float,
+    ) -> bool:
+        """写入注册学生及其特征向量（预处理模块通过回调调用，storage_type='local' 时）
 
         Args:
-            face_id: 人脸标识（local 模式为 student_name，temp 模式不入库）
+            face_id: 人脸标识（UI 生成的 UUID）
             student_name: 学生姓名
-            created_at: 注册时间戳
+            embeddings: [(embedding_blob: bytes, pose_type: str), ...]
+            registered_at: 注册时间戳
+
+        Returns:
+            True 表示写入成功
         """
-        if not face_id or not student_name or not created_at:
-            print(f"[DatabaseService] register_face 缺少必填字段: face_id={face_id!r}, "
-                  f"student_name={student_name!r}, created_at={created_at!r}")
+        if not face_id or not student_name or not embeddings:
+            print(f"[DatabaseService] insert_face_embeddings_batch 缺少必填字段")
             return False
 
-        sql = ("INSERT OR REPLACE INTO registered_faces (face_id, student_name, created_at) "
-               "VALUES (?, ?, ?)")
+        student_sql = ("INSERT OR REPLACE INTO registered_students "
+                       "(face_id, student_name, registered_at) VALUES (?, ?, ?)")
+        embedding_sql = ("INSERT INTO face_embeddings "
+                         "(face_id, embedding, pose_type) VALUES (?, ?, ?)")
+
         last_error = None
         for attempt in range(3):
             try:
                 conn = self._conn_mgr.get_connection()
-                conn.execute(sql, (face_id, student_name, created_at))
+                conn.execute("BEGIN")
+                conn.execute(student_sql, (face_id, student_name, registered_at))
+                if embeddings:
+                    conn.executemany(embedding_sql, [
+                        (face_id, emb, pose) for emb, pose in embeddings
+                    ])
                 conn.commit()
-                print(f"[DatabaseService] 已注册人脸: {face_id} ({student_name})")
+                print(f"[DatabaseService] 已注册人脸: {face_id} ({student_name}), "
+                      f"{len(embeddings)} 个特征向量")
                 return True
             except sqlite3.Error as e:
                 last_error = e
-                print(f"[DatabaseService] 注册人脸失败 (第{attempt+1}次): {e}")
+                print(f"[DatabaseService] 人脸注册失败 (第{attempt+1}次): {e}")
                 try:
                     conn.rollback()
                 except Exception:
                     pass
                 if attempt < 2:
                     time.sleep(0.1)
-        print(f"[DatabaseService] 注册人脸最终失败: {last_error}")
+        print(f"[DatabaseService] 人脸注册最终失败: {last_error}")
         return False
+
+    def query_registered_students(self) -> List[Dict[str, Any]]:
+        """查询所有已注册学生（仅主表，不含 embedding）"""
+        sql = "SELECT * FROM registered_students ORDER BY student_name"
+        try:
+            conn = self._conn_mgr.get_connection()
+            rows = conn.execute(sql).fetchall()
+            return [dict(row) for row in rows]
+        except sqlite3.Error as e:
+            print(f"[DatabaseService] 查询已注册学生失败: {e}")
+            return []
+
+    def load_all_face_embeddings(self) -> List[Dict[str, Any]]:
+        """程序启动时加载全部持久人脸的完整数据（含所有 embedding）
+
+        Returns: [
+            {"face_id": str, "student_name": str, "registered_at": float,
+             "embeddings": [{"embedding": bytes, "pose_type": str}, ...]},
+            ...
+        ]
+        """
+        sql = """
+            SELECT s.face_id, s.student_name, s.registered_at,
+                   e.embedding, e.pose_type
+            FROM registered_students s
+            LEFT JOIN face_embeddings e ON s.face_id = e.face_id
+            ORDER BY s.student_name
+        """
+        try:
+            conn = self._conn_mgr.get_connection()
+            rows = conn.execute(sql).fetchall()
+            result: Dict[str, dict] = {}
+            for row in rows:
+                fid = row["face_id"]
+                if fid not in result:
+                    result[fid] = {
+                        "face_id": fid,
+                        "student_name": row["student_name"],
+                        "registered_at": row["registered_at"],
+                        "embeddings": [],
+                    }
+                if row["embedding"] is not None:
+                    result[fid]["embeddings"].append({
+                        "embedding": row["embedding"],
+                        "pose_type": row["pose_type"],
+                    })
+            return list(result.values())
+        except sqlite3.Error as e:
+            print(f"[DatabaseService] 加载人脸特征向量失败: {e}")
+            return []
+
+    def query_registered_faces(self) -> List[Dict[str, Any]]:
+        """查询所有已注册人脸（兼容旧接口，转调 registered_students）"""
+        return self.query_registered_students()
 
     # ────────────────── 会话管理 ──────────────────
 
@@ -92,7 +161,7 @@ class DatabaseService:
         """创建会话记录（界面模块调用）
 
         Args:
-            session: {"session_id": str, "student_id": str|None,
+            session: {"session_id": str, "face_id": str|None,
                        "mode": "class"|"exam", "start_time": float}
         """
         required = ["session_id", "mode", "start_time"]
@@ -101,7 +170,7 @@ class DatabaseService:
             print(f"[DatabaseService] create_session 缺少必填字段: {missing}")
             return False
 
-        sql = ("INSERT INTO sessions (session_id, student_id, mode, start_time) "
+        sql = ("INSERT INTO sessions (session_id, face_id, mode, start_time) "
                "VALUES (?, ?, ?, ?)")
         last_error = None
         for attempt in range(3):
@@ -109,7 +178,7 @@ class DatabaseService:
                 conn = self._conn_mgr.get_connection()
                 conn.execute(sql, (
                     session["session_id"],
-                    session.get("student_id"),
+                    session.get("face_id"),
                     session["mode"],
                     session["start_time"],
                 ))
@@ -315,6 +384,11 @@ class DatabaseService:
             conditions.append("abnormal_event_count <= ?")
             values.append(abnormal_max)
 
+        face_id = filter_params.get("face_id")
+        if face_id:
+            conditions.append("face_id = ?")
+            values.append(face_id)
+
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         sql = f"SELECT * FROM sessions{where} ORDER BY start_time DESC"
 
@@ -402,6 +476,116 @@ class DatabaseService:
         """关闭数据库连接"""
         self._conn_mgr.close()
         print("[DatabaseService] 数据库服务已关闭")
+
+    def seed_debug_data(self) -> None:
+        """写入调试数据（幂等：已有数据则跳过）
+
+        写入 3 个已注册人脸、6 个会话及其专注度记录和告警事件。
+        """
+        conn = self._conn_mgr.get_connection()
+        row = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()
+        if row and row[0] > 0:
+            print(f"[DatabaseService] 数据库已有 {row[0]} 条会话，跳过 seed_debug_data")
+            return
+
+        import datetime
+        import random
+        import math
+
+        import numpy as np
+        students = [
+            {"face_id": "face_debug_zhangsan", "student_name": "张三"},
+            {"face_id": "face_debug_lisi", "student_name": "李四"},
+            {"face_id": "face_debug_wangwu", "student_name": "王五"},
+        ]
+        now = time.time()
+        for s in students:
+            # 生成 8 个 placeholder 特征向量（512d float32）
+            dummy_embeddings = [
+                (np.random.randn(512).astype(np.float32).tobytes(),
+                 ["frontal", "left", "right", "down"][i % 4])
+                for i in range(8)
+            ]
+            self.insert_face_embeddings_batch(
+                s["face_id"], s["student_name"], dummy_embeddings, now
+            )
+
+        session_defs = [
+            {"sid": "seed_001", "face_id": "face_debug_zhangsan", "mode": "class",
+             "start": datetime.datetime(2026, 4, 22, 9, 0, 0),
+             "duration_min": 50, "focus_base": 88, "alert_count": 0},
+            {"sid": "seed_002", "face_id": "face_debug_lisi", "mode": "exam",
+             "start": datetime.datetime(2026, 4, 25, 10, 0, 0),
+             "duration_min": 60, "focus_base": 75, "alert_count": 2},
+            {"sid": "seed_003", "face_id": "face_debug_wangwu", "mode": "class",
+             "start": datetime.datetime(2026, 4, 28, 14, 0, 0),
+             "duration_min": 45, "focus_base": 65, "alert_count": 3},
+            {"sid": "seed_004", "face_id": "face_debug_zhangsan", "mode": "exam",
+             "start": datetime.datetime(2026, 5, 2, 8, 30, 0),
+             "duration_min": 55, "focus_base": 45, "alert_count": 4},
+            {"sid": "seed_005", "face_id": "face_debug_lisi", "mode": "class",
+             "start": datetime.datetime(2026, 5, 5, 15, 0, 0),
+             "duration_min": 40, "focus_base": 92, "alert_count": 0},
+            {"sid": "seed_006", "face_id": "face_debug_wangwu", "mode": "exam",
+             "start": datetime.datetime(2026, 5, 8, 9, 30, 0),
+             "duration_min": 50, "focus_base": 58, "alert_count": 2},
+        ]
+
+        alert_types = [
+            ("离席", "检测到离开座位超过30秒"),
+            ("低分告警", "专注度低于阈值60分"),
+            ("姿态异常", "头部持续低倾超过15秒"),
+            ("多人", "画面中检测到多人"),
+            ("行为异常", "检测到走神行为"),
+        ]
+
+        for sd in session_defs:
+            start_ts = sd["start"].timestamp()
+            self.create_session({
+                "session_id": sd["sid"],
+                "face_id": sd["face_id"],
+                "mode": sd["mode"],
+                "start_time": start_ts,
+            })
+
+            duration_s = sd["duration_min"] * 60
+            record_count = random.randint(15, 25)
+            records = []
+            for i in range(record_count):
+                ts = start_ts + (i / record_count) * duration_s
+                variation = lambda: random.uniform(-8, 8)
+                scores = {
+                    "head_pose_score": max(0, min(100, sd["focus_base"] + variation())),
+                    "behavior_score": max(0, min(100, sd["focus_base"] + variation())),
+                    "expression_score": max(0, min(100, sd["focus_base"] + variation())),
+                    "evidence_score": max(0, min(100, sd["focus_base"] + variation())),
+                    "people_score": random.uniform(80, 100),
+                }
+                scores["final_focus_score"] = sum(scores.values()) / len(scores)
+                scores["is_force_zero"] = False
+                records.append({
+                    "session_id": sd["sid"],
+                    "timestamp": ts,
+                    **scores,
+                    "warn_info": None,
+                })
+
+            # 注入告警
+            if sd["alert_count"] > 0:
+                alert_indices = random.sample(
+                    range(record_count), min(sd["alert_count"], record_count)
+                )
+                for idx in alert_indices:
+                    a_type, a_detail = random.choice(alert_types)
+                    records[idx]["warn_info"] = {"type": a_type, "detail": a_detail}
+
+            self.insert_focus_records_batch(records)
+
+            end_ts = start_ts + duration_s
+            self.end_session(sd["sid"], end_ts)
+
+        print(f"[DatabaseService] seed_debug_data 完成: "
+              f"{len(students)} 学生, {len(session_defs)} 会话")
 
 
 database_service = DatabaseService()

@@ -16,7 +16,7 @@ class SessionRecord:
     session_id: str
     mode: str  # "class" | "exam"
     start_time: float
-    student_id: Optional[str] = None
+    face_id: Optional[str] = None
     end_time: Optional[float] = None
     avg_focus_score: Optional[float] = None
     abnormal_event_count: int = 0
@@ -58,10 +58,18 @@ class AlertEventRecord:
 # 表 4: 已注册人脸表 registered_faces
 # ============================================================
 @dataclass
-class RegisteredFace:
+class RegisteredStudent:
     face_id: str
     student_name: str
-    created_at: float
+    registered_at: float
+
+
+@dataclass
+class FaceEmbedding:
+    face_id: str
+    embedding: bytes
+    pose_type: Optional[str] = None
+    id: Optional[int] = None
 
 
 # ============================================================
@@ -71,7 +79,7 @@ class SchemaManager:
     """数据库 Schema 版本管理器（单例）"""
 
     _instance: Optional["SchemaManager"] = None
-    CURRENT_VERSION: int = 1
+    CURRENT_VERSION: int = 3
 
     _DDL = {
         1: [
@@ -145,6 +153,46 @@ class SchemaManager:
             CREATE INDEX IF NOT EXISTS idx_registered_faces_name
                 ON registered_faces(student_name)
             """,
+        ],
+        2: [
+            "DROP TABLE IF EXISTS registered_faces",
+            "DROP INDEX IF EXISTS idx_registered_faces_name",
+            """
+            CREATE TABLE IF NOT EXISTS registered_students (
+                face_id       TEXT PRIMARY KEY,
+                student_name  TEXT NOT NULL,
+                registered_at REAL NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS face_embeddings (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                face_id     TEXT NOT NULL,
+                embedding   BLOB NOT NULL,
+                pose_type   TEXT,
+                FOREIGN KEY (face_id) REFERENCES registered_students(face_id) ON DELETE CASCADE
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_face_embeddings_face_id ON face_embeddings(face_id)",
+        ],
+        3: [
+            "DROP TABLE IF EXISTS sessions",
+            "DROP INDEX IF EXISTS idx_sessions_student_id",
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id      TEXT PRIMARY KEY,
+                face_id         TEXT,
+                mode            TEXT NOT NULL CHECK(mode IN ('class', 'exam')),
+                start_time      REAL NOT NULL,
+                end_time        REAL,
+                avg_focus_score REAL,
+                abnormal_event_count INTEGER DEFAULT 0,
+                FOREIGN KEY (face_id) REFERENCES registered_students(face_id)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions(start_time)",
+            "CREATE INDEX IF NOT EXISTS idx_sessions_mode ON sessions(mode)",
+            "CREATE INDEX IF NOT EXISTS idx_sessions_face_id ON sessions(face_id)",
         ]
     }
 

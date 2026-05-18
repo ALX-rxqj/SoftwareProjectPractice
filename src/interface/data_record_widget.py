@@ -81,10 +81,10 @@ class DataRecordWidget(QFrame):
         layout.addLayout(header_layout)
 
         self.record_table = QTableWidget()
-        # 8 列：col 0 = 勾选框（默认隐藏），col 1~7 = 数据
-        self.record_table.setColumnCount(8)
+        # 9 列：col 0 = 勾选框（默认隐藏），col 1~8 = 数据
+        self.record_table.setColumnCount(9)
         self.record_table.setHorizontalHeaderLabels([
-            "", "会话 ID", "日期", "开始时间", "结束时间",
+            "", "会话 ID", "人脸 ID", "日期", "开始时间", "结束时间",
             "模式", "平均专注度", "异常事件",
         ])
         self.record_table.setFont(QFont(*get_font("sm", "normal", "data")))
@@ -136,6 +136,7 @@ class DataRecordWidget(QFrame):
             self.record_table.setItem(row, 0, cb_item)
 
             session_id = session.get("session_id", "")
+            face_id = session.get("face_id", "")
             start_time = session.get("start_time", "")
             end_time = session.get("end_time", "")
             mode = {"class": "网课模式", "exam": "考试模式"}.get(
@@ -148,9 +149,10 @@ class DataRecordWidget(QFrame):
             time_start = start_time.split(" ")[1] if " " in start_time else start_time
             time_end = end_time.split(" ")[1] if " " in end_time else end_time
 
-            # 数据列 col 1~7
+            # 数据列 col 1~8
             items = [
                 QTableWidgetItem(session_id),
+                QTableWidgetItem(face_id),
                 QTableWidgetItem(date_str),
                 QTableWidgetItem(time_start),
                 QTableWidgetItem(time_end),
@@ -165,7 +167,7 @@ class DataRecordWidget(QFrame):
                 item_.setTextAlignment(Qt.AlignCenter)
                 self.record_table.setItem(row, col, item_)
 
-            focus_item = self.record_table.item(row, 6)
+            focus_item = self.record_table.item(row, 7)
             if avg_focus >= 70:
                 focus_item.setForeground(QColor(COLORS["focus_high"]))
             elif avg_focus < 50:

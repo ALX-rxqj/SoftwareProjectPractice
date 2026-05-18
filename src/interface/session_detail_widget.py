@@ -181,6 +181,7 @@ class SessionDetailWidget(QFrame):
         self.current_records = records
 
         session_id = session.get("session_id", "")
+        face_id = session.get("face_id", "")
         start_time = session.get("start_time", "")
         end_time = session.get("end_time", "")
         mode = {"class": "网课模式", "exam": "考试模式"}.get(
@@ -191,6 +192,7 @@ class SessionDetailWidget(QFrame):
 
         self.title_label.setText(f"会话详情 - {session_id}")
         self.session_info_label.setText(
+            f"人脸ID: {face_id}  |  "
             f"会话时间: {start_time} ~ {end_time}  |  模式: {mode}  |  "
             f"平均专注度: {avg_focus:.1f}  |  异常事件: {abnormal_count}  |  记录数: {len(records)}"
         )

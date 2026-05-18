@@ -79,6 +79,7 @@ class InterfaceManager:
         self._focus_result_callback: Optional[Callable] = None
         self._camera_list_callback: Optional[Callable] = None
         self._face_registration_frame_callback: Optional[Callable] = None
+        self._face_registration_result_callback: Optional[Callable[[Dict[str, Any]], None]] = None
 
         self._preprocessing_callback: Optional[Callable] = None
         self._state_estimation_callback: Optional[Callable] = None
@@ -110,6 +111,22 @@ class InterfaceManager:
     def clear_face_registration_frame_callback(self):
         """清除人脸注册专用帧回调"""
         self._face_registration_frame_callback = None
+
+    def register_face_registration_result_callback(
+        self, callback: Callable[[Dict[str, Any]], None]
+    ):
+        """注册人脸注册异步结果回调"""
+        self._face_registration_result_callback = callback
+
+    def clear_face_registration_result_callback(self):
+        """清除人脸注册异步结果回调"""
+        self._face_registration_result_callback = None
+
+    def on_face_registration_result(self, data: Dict[str, Any]):
+        """接收预处理模块的异步人脸注册结果（PRI-04 上行包）"""
+        print(f"[InterfaceManager] 人脸注册结果: {data}")
+        if self._face_registration_result_callback:
+            self._face_registration_result_callback(data)
 
     def on_video_frame_received(self, frame: Any, faces: list, timestamp: float):
         """
@@ -192,7 +209,10 @@ class InterfaceManager:
 
         return {"success": True, "msg": "摄像头列表请求已发送"}
 
-    def toggle_capture(self, device_id: int, start: bool) -> Dict[str, Any]:
+    def toggle_capture(
+        self, device_id: int, start: bool,
+        monitored_faces: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """
         指令：启动/停止视频采集
         路由：转发至预处理模块
@@ -201,6 +221,7 @@ class InterfaceManager:
         Args:
             device_id: int - 摄像头设备ID
             start: bool - True启动，False停止
+            monitored_faces: Optional[List[str]] - 启动分析时指定要监控的 face_id 列表
 
         Returns:
             {success: bool, msg: str}
@@ -215,14 +236,17 @@ class InterfaceManager:
         if self._preprocessing_callback:
             result = self._preprocessing_callback("toggle_capture", {
                 "device_id": device_id,
-                "start": start
+                "start": start,
+                "monitored_faces": monitored_faces or [],
             })
             if not start:
                 self.clear_face_registration_frame_callback()
+                self.clear_face_registration_result_callback()
             return result
 
         if not start:
             self.clear_face_registration_frame_callback()
+            self.clear_face_registration_result_callback()
         return {"success": True, "msg": f"{action}视频采集指令已发送"}
 
     def load_video_file(self, file_path: str) -> Dict[str, Any]:
@@ -271,13 +295,13 @@ class InterfaceManager:
             self._is_analysis_running = False
             return {"success": True}
 
-    def start_new_session(self, student_id: str = None) -> str:
+    def start_new_session(self, face_id: str = None) -> str:
         """
         指令：创建新会话
         路由：直接至数据库模块（写 sessions 表）
 
         Args:
-            student_id: 可选，被监控学生标识
+            face_id: 可选，被监控人脸标识
 
         Returns:
             session_id: str
@@ -290,7 +314,7 @@ class InterfaceManager:
 
         ok = database_service.create_session({
             "session_id": self._current_session_id,
-            "student_id": student_id,
+            "face_id": face_id,
             "mode": mode_str,
             "start_time": start_time,
         })
@@ -399,12 +423,15 @@ class InterfaceManager:
             storage_type: str - "local"（本地持久）或 "temp"（会话临时）
 
         Returns:
-            {success: bool, face_id: str, msg: str}
+            {success: bool, face_id: str, msg: str} - 立即返回 ACK，实际结果通过 PRI-04 上行包异步通知
         """
+        import uuid
+
         if storage_type not in ["local", "temp"]:
             return {"success": False, "msg": f"无效的存储类型: {storage_type}"}
 
-        face_id = f"temp_{name}" if storage_type == "temp" else name
+        prefix = "face_" if storage_type == "local" else "temp_"
+        face_id = f"{prefix}{uuid.uuid4().hex[:12]}"
         print(f"[InterfaceManager] 注册人脸: {name}, storage={storage_type}, "
               f"frames={len(frames)}, face_id={face_id}")
 
@@ -418,6 +445,17 @@ class InterfaceManager:
 
         return {"success": True, "face_id": face_id,
                 "msg": f"人脸 {face_id} 注册指令已发送（预处理模块未连接）"}
+
+    def query_face_registry(self) -> Dict[str, Any]:
+        """
+        指令：查询预处理模块内存中已注册的人脸列表
+
+        Returns:
+            {success: bool, faces: [{face_id, student_name, storage_type, registered_at}, ...]}
+        """
+        if self._preprocessing_callback:
+            return self._preprocessing_callback("query_face_registry", {})
+        return {"success": False, "faces": [], "msg": "预处理模块未连接"}
 
     def set_preprocessing_callback(self, callback: Callable[[str, Dict], Optional[Dict]]):
         """设置预处理模块回调（用于指令下发）"""

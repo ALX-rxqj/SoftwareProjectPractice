@@ -176,6 +176,8 @@ class MainWindow(QMainWindow):
         self.session_detail_widget.export_report_clicked.connect(self.on_export_report_clicked)
         self.left_sidebar.camera_selected.connect(self.on_camera_selected)
         self.left_sidebar.refresh_requested.connect(self.on_refresh_camera_list)
+        self.left_sidebar.face_selected.connect(self.on_face_selected)
+        self.left_sidebar.show_bbox_toggled.connect(self.video_widget.set_show_face_boxes)
         self.video_widget.frame_updated.connect(self.on_video_frame_updated)
         self.top_nav.register_face_clicked.connect(self.on_register_face_clicked)
         self.top_nav_query.register_face_clicked.connect(self.on_register_face_clicked)
@@ -185,12 +187,17 @@ class MainWindow(QMainWindow):
         print(f"[MainWindow] 预处理模块数据源: {unified_data_manager.preprocessing_source.value}")
         print(f"[MainWindow] 状态估计模块数据源: {unified_data_manager.state_estimation_source.value}")
         print(f"[MainWindow] 数据库模块数据源: {unified_data_manager.database_source.value}")
-        print(f"[MainWindow] 初始化学生列表...")
-        self.face_ids = unified_data_manager.generate_face_ids()
-        print(f"[MainWindow] 获取到 {len(self.face_ids)} 个学生")
-
         print(f"[MainWindow] 请求摄像头列表...")
         unified_data_manager.request_camera_list()
+        self.refresh_face_list()
+
+    def refresh_face_list(self):
+        """从预处理注册表（降级至数据库）获取已注册人脸列表"""
+        faces = unified_data_manager.generate_face_ids_with_details()
+        print(f"[MainWindow] 刷新人脸列表: {len(faces)} 个已注册人脸")
+        self.left_sidebar.update_faces(faces)
+        face_ids = unified_data_manager.generate_face_ids()
+        self.filter_sidebar.refresh_face_list(face_ids)
 
     def on_camera_list_received(self, cameras):
         """摄像头列表回调"""
@@ -212,6 +219,7 @@ class MainWindow(QMainWindow):
         self.main_stacked_layout.setCurrentIndex(0)
         self.top_nav.set_mode(mode)
         self.top_nav_query.set_mode(mode)
+        self.refresh_face_list()
 
     def switch_to_query_mode(self):
         self.main_stacked_layout.setCurrentIndex(1)
@@ -267,9 +275,28 @@ class MainWindow(QMainWindow):
         if self.right_stacked_layout.currentIndex() == 1:
             self.session_detail_widget.update_chart(chart_options)
 
+    def on_face_selected(self, face_id: str):
+        """用户在人脸列表中选择人脸"""
+        self.current_face_id = face_id
+        print(f"[MainWindow] 当前选中人脸: {face_id}")
+
     def on_start_analysis(self):
         print("[MainWindow] 开始分析")
-        result = interface_manager.toggle_capture(device_id=self.current_device_id, start=True)
+
+        if not self.left_sidebar.has_faces():
+            self._msg("warning", "提示", "请先完成人脸注册")
+            return
+
+        face_id = self.left_sidebar.get_selected_face_id()
+        if face_id:
+            self.current_face_id = face_id
+        monitored_faces = [face_id] if face_id else []
+
+        print(f"[MainWindow] 监控人脸: {monitored_faces}")
+        result = interface_manager.toggle_capture(
+            device_id=self.current_device_id, start=True,
+            monitored_faces=monitored_faces,
+        )
         print(f"[MainWindow] 摄像头控制结果: {result}")
 
         session_result = interface_manager.toggle_analysis(start=True)
@@ -311,19 +338,16 @@ class MainWindow(QMainWindow):
         unified_data_manager.refresh_camera_list()
 
     def on_video_frame_updated(self, frame_data):
-        """视频帧更新时，同步更新左侧人脸列表"""
+        """视频帧更新时，传递 bbox 数据给 video_widget 用于勾选框绘制"""
         faces = frame_data.get("faces", [])
         if faces:
-            self.left_sidebar.update_faces(faces)
+            self.video_widget.set_face_boxes(faces)
 
     def on_register_face_clicked(self):
         """注册人脸按钮点击"""
         if interface_manager.is_capture_running:
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self, "提示",
-                '正在分析中，请先点击"停止分析"后再注册人脸。'
-            )
+            self._msg("warning", "提示",
+                      '正在分析中，请先点击"停止分析"后再注册人脸。')
             return
 
         print("[MainWindow] 打开人脸注册弹窗")
@@ -331,6 +355,7 @@ class MainWindow(QMainWindow):
             device_id=self.current_device_id, parent=self
         )
         dialog.registration_completed.connect(self.on_face_registration_completed)
+        dialog.face_registration_success.connect(self.refresh_face_list)
         dialog.show()
 
     def on_face_registration_completed(self, data: dict):
@@ -428,13 +453,11 @@ class MainWindow(QMainWindow):
             return
 
         count = len(session_ids)
-        reply = QMessageBox.question(
-            None, "确认删除",
+        reply = self._question(
+            "确认删除",
             f"确定删除选中的 {count} 条会话及其关联数据吗？此操作不可撤销。",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
         )
-        if reply != QMessageBox.Yes:
+        if not reply:
             return
 
         result = unified_data_manager.delete_sessions(session_ids)
@@ -489,3 +512,34 @@ class MainWindow(QMainWindow):
         elif level == "critical":
             box.setIcon(QMessageBox.Critical)
         box.exec_()
+
+    @staticmethod
+    def _question(title: str, text: str) -> bool:
+        """显示不受深色主题影响的确认框，返回 True 表示用户点击 Yes"""
+        box = QMessageBox()
+        box.setWindowTitle(title)
+        box.setText(text)
+        box.setIcon(QMessageBox.Question)
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        box.setStyleSheet("""
+            QMessageBox {
+                background-color: #FFFFFF;
+                color: #000000;
+            }
+            QLabel {
+                color: #000000;
+            }
+            QPushButton {
+                color: #000000;
+                background-color: #E0E0E0;
+                border: 1px solid #AAAAAA;
+                border-radius: 4px;
+                padding: 6px 16px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #D0D0D0;
+            }
+        """)
+        return box.exec_() == QMessageBox.Yes

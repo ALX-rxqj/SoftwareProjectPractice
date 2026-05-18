@@ -1,5 +1,5 @@
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QPixmap, QImage, QFont
+from PyQt5.QtGui import QPixmap, QImage, QFont, QPainter, QPen, QColor
 from PyQt5.QtWidgets import QFrame, QVBoxLayout, QLabel, QHBoxLayout
 
 from .interface_manager import interface_manager, VideoFrameData
@@ -17,6 +17,8 @@ class VideoWidget(QFrame):
         self.setGraphicsEffect(create_card_shadow(elevated=True))
         self.is_running = False
         self.current_frame_data = None
+        self._show_face_boxes = False
+        self._current_face_boxes = []
         self.init_ui()
         self._register_interface_callback()
 
@@ -27,6 +29,7 @@ class VideoWidget(QFrame):
         if not self.is_running:
             return
         self.current_frame_data = data
+        self._current_face_boxes = list(data.faces) if data.faces else []
         self.update_frame(data)
         self.frame_updated.emit({
             "faces": data.faces,
@@ -56,9 +59,35 @@ class VideoWidget(QFrame):
                     self.video_label.width(), self.video_label.height(),
                     Qt.KeepAspectRatio, Qt.SmoothTransformation,
                 )
+
+                if self._show_face_boxes and self._current_face_boxes:
+                    painter = QPainter(scaled_pixmap)
+                    pen = QPen(QColor("#00FF00"), 2)
+                    painter.setPen(pen)
+                    scale_x = scaled_pixmap.width() / w
+                    scale_y = scaled_pixmap.height() / h
+                    for face in self._current_face_boxes:
+                        bbox = face.get("bbox", [])
+                        if len(bbox) == 4:
+                            x, y, bw, bh = bbox
+                            painter.drawRect(
+                                int(x * scale_x), int(y * scale_y),
+                                int(bw * scale_x), int(bh * scale_y),
+                            )
+                    painter.end()
+
                 self.video_label.setPixmap(scaled_pixmap)
         except Exception as e:
             print(f"[VideoWidget] 帧渲染错误: {e}")
+
+    def set_show_face_boxes(self, enabled: bool):
+        self._show_face_boxes = enabled
+        if not enabled:
+            self._current_face_boxes = []
+        self.update_frame()
+
+    def set_face_boxes(self, boxes: list):
+        self._current_face_boxes = list(boxes)
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -124,6 +153,7 @@ class VideoWidget(QFrame):
         self.is_running = False
         self.video_label.clear()
         self.current_frame_data = None
+        self._current_face_boxes = []
         self.video_label.setText("等待预处理模块接入...")
         self.video_label.setStyleSheet(get_style("video_placeholder"))
 

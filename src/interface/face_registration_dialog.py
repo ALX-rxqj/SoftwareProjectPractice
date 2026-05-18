@@ -39,6 +39,7 @@ class FaceRegistrationDialog(QDialog):
     """人脸注册弹窗"""
 
     registration_completed = pyqtSignal(dict)
+    face_registration_success = pyqtSignal()
     _camera_started_externally = False
 
     def __init__(self, device_id: int, parent=None):
@@ -125,6 +126,7 @@ class FaceRegistrationDialog(QDialog):
         self.stacked.setContentsMargins(0, 0, 0, 0)
         self.stacked.addWidget(self._create_auth_page())
         self.stacked.addWidget(self._create_capture_page())
+        self.stacked.addWidget(self._create_processing_page())
         self.stacked.addWidget(self._create_completion_page())
         self.stacked.setCurrentIndex(0)
         main_layout.addWidget(self.stacked)
@@ -407,8 +409,60 @@ class FaceRegistrationDialog(QDialog):
             )
             self._capture_started = False
         interface_manager.clear_face_registration_frame_callback()
+        interface_manager.clear_face_registration_result_callback()
         self._frame_buffer.clear()
         self._collected_frames.clear()
+
+    # ─────────────────────────────────────────────────
+
+    def _create_processing_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(
+            get_spacing("xxl"), get_spacing("xxl"),
+            get_spacing("xxl"), get_spacing("xxl"),
+        )
+        layout.setSpacing(get_spacing("lg"))
+
+        layout.addStretch()
+
+        self.processing_spinner = QLabel("⏳")
+        self.processing_spinner.setAlignment(Qt.AlignCenter)
+        self.processing_spinner.setFont(QFont(*get_font("hero", "normal", "display")))
+        self.processing_spinner.setStyleSheet(
+            f"color: {COLORS['primary']}; background: transparent;"
+        )
+        layout.addWidget(self.processing_spinner)
+
+        processing_title = QLabel("正在处理人脸数据")
+        processing_title.setAlignment(Qt.AlignCenter)
+        processing_title.setFont(QFont(*get_font("xl", "bold", "display")))
+        processing_title.setStyleSheet(
+            f"color: {COLORS['text']}; background: transparent;"
+        )
+        layout.addWidget(processing_title)
+
+        processing_sub = QLabel("正在进行特征提取与人脸注册，请稍候...")
+        processing_sub.setAlignment(Qt.AlignCenter)
+        processing_sub.setFont(QFont(*get_font("base", "normal", "ui")))
+        processing_sub.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; background: transparent;"
+        )
+        layout.addWidget(processing_sub)
+
+        layout.addStretch()
+
+        self.processing_close_btn = QPushButton("确定")
+        self.processing_close_btn.setMinimumSize(120, 44)
+        self.processing_close_btn.setFont(QFont(*get_font("base", "bold", "ui")))
+        self.processing_close_btn.setCursor(Qt.PointingHandCursor)
+        self.processing_close_btn.setStyleSheet(get_style("button_glow"))
+        self.processing_close_btn.clicked.connect(self.accept)
+        self.processing_close_btn.setVisible(False)
+        layout.addWidget(self.processing_close_btn, alignment=Qt.AlignCenter)
+
+        layout.addStretch()
+        return page
 
     # ─── 授权页逻辑 ───────────────────────────────────
 
@@ -545,17 +599,51 @@ class FaceRegistrationDialog(QDialog):
         self.frame_count_label.setText(
             f"共采集 {total} 帧（{keyframes} 张关键帧 + {total - keyframes} 张自动采样帧）"
         )
-        self.stacked.setCurrentIndex(2)
+        self.stacked.setCurrentIndex(3)
 
     def _on_complete(self, storage_type: str):
-        """完成注册，发送信号"""
+        """用户选择存储方式 → 切到处理页，等待预处理异步结果"""
         print(
             f"[FaceRegistrationDialog] 注册完成: name={self._student_name}, "
             f"storage={storage_type}, frames={len(self._collected_frames)}"
         )
+        # 显示处理中页面
+        self.stacked.setCurrentIndex(2)
+
+        # 注册异步结果回调（在发送注册指令之前）
+        interface_manager.register_face_registration_result_callback(
+            self._on_registration_result
+        )
+
+        # 发送注册完成信号，由 MainWindow 下发 register_face 命令
         self.registration_completed.emit({
             "student_name": self._student_name,
             "frames": self._collected_frames,
             "storage_type": storage_type,
         })
-        self.accept()
+
+    def _on_registration_result(self, result: dict):
+        """预处理模块异步返回的人脸注册结果"""
+        interface_manager.clear_face_registration_result_callback()
+
+        if result.get("success"):
+            student_name = result.get("student_name", self._student_name)
+            face_id = result.get("face_id", "")
+            # 更新处理页为成功状态
+            self.processing_spinner.setText("✓")
+            self.processing_spinner.setStyleSheet(
+                f"color: {COLORS['success']}; background: transparent;"
+            )
+            # 更新文字
+            for child in self.stacked.widget(2).children():
+                if isinstance(child, QLabel) and "正在处理" in (child.text() or ""):
+                    child.setText(f"注册成功\n学生: {student_name}\nID: {face_id}")
+                    child.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
+            self.processing_close_btn.setVisible(True)
+
+            print(f"[FaceRegistrationDialog] 人脸注册成功: {student_name} ({face_id})")
+            self.face_registration_success.emit()
+        else:
+            error_msg = result.get("msg", "注册失败，请重试")
+            QMessageBox.critical(self, "注册失败", error_msg)
+            self.reject()
