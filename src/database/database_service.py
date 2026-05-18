@@ -474,6 +474,36 @@ class DatabaseService:
 
         return {"deleted_count": deleted_count, "total": total}
 
+    def delete_face(self, face_id: str) -> Dict[str, Any]:
+        """级联删除已注册人脸：删人脸 → CASCADE 删 embeddings + sessions + focus_records + alert_events"""
+        if not face_id:
+            return {"success": False, "deleted_face_id": "", "msg": "face_id 为空"}
+
+        try:
+            conn = self._conn_mgr.get_connection()
+            conn.execute("BEGIN")
+            conn.execute("DELETE FROM sessions WHERE face_id = ?", (face_id,))
+            cursor = conn.execute(
+                "DELETE FROM registered_students WHERE face_id = ?",
+                (face_id,),
+            )
+            deleted = cursor.rowcount
+            conn.commit()
+            if deleted:
+                print(f"[DatabaseService] 已删除人脸: {face_id}")
+                return {"success": True, "deleted_face_id": face_id}
+            else:
+                print(f"[DatabaseService] 未找到人脸: {face_id}")
+                return {"success": False, "deleted_face_id": face_id,
+                        "msg": f"未找到 face_id={face_id}"}
+        except sqlite3.Error as e:
+            print(f"[DatabaseService] 删除人脸失败: {e}")
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return {"success": False, "deleted_face_id": face_id, "msg": str(e)}
+
     def shutdown(self) -> None:
         """关闭数据库连接"""
         self._conn_mgr.close()

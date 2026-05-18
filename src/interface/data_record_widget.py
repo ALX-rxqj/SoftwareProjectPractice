@@ -142,8 +142,8 @@ class DataRecordWidget(QFrame):
             mode = {"class": "网课模式", "exam": "考试模式"}.get(
                 session.get("mode", ""), session.get("mode", "")
             )
-            avg_focus = session.get("avg_focus_score", 0)
-            abnormal_count = session.get("abnormal_event_count", 0)
+            avg_focus = session.get("avg_focus_score") or 0.0
+            abnormal_count = session.get("abnormal_event_count") or 0
 
             date_str = start_time.split(" ")[0] if " " in start_time else start_time
             time_start = start_time.split(" ")[1] if " " in start_time else start_time

@@ -31,7 +31,7 @@ class PipelineConfig:
 
 
 class FaceDetector:
-    def __init__(self, min_face_size: int, yolo_model_path: str | Path = "yolov8-face.pt"):
+    def __init__(self, min_face_size: int, yolo_model_path: str | Path = "weights/yolov8-face.pt"):
         self.min_face_size = min_face_size
         self._yolo = None
         self._init_yolo(yolo_model_path)

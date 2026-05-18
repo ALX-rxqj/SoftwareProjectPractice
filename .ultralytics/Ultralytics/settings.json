@@ -1,0 +1,21 @@
+{
+  "settings_version": "0.0.6",
+  "datasets_dir": "D:\\CodeText\\TraeProjects\\Online-class-monitoring\\SoftwareProjectPractice\\datasets",
+  "weights_dir": "weights",
+  "runs_dir": "runs",
+  "uuid": "0cb89f5c037ec176d3c6eae07c5767ff27e730404fc1687e4696d2f65ba578dc",
+  "sync": true,
+  "api_key": "",
+  "openai_api_key": "",
+  "clearml": true,
+  "comet": true,
+  "dvc": true,
+  "hub": true,
+  "mlflow": true,
+  "neptune": true,
+  "raytune": true,
+  "tensorboard": false,
+  "wandb": false,
+  "vscode_msg": true,
+  "openvino_msg": true
+}

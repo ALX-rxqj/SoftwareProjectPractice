@@ -272,13 +272,14 @@ class InterfaceManager:
 
         return {"success": True, "msg": "视频文件加载指令已发送"}
 
-    def toggle_analysis(self, start: bool) -> Optional[Dict[str, Any]]:
+    def toggle_analysis(self, start: bool, face_id: str = None) -> Optional[Dict[str, Any]]:
         """
         指令：启动/停止专注度分析
         路由：直接至状态估计模块
 
         Args:
             start: bool - True启动，False停止
+            face_id: str - 启动时传入被监控的人脸ID
 
         Returns:
             启动时返回 {session_id: str}，停止时返回 {success: bool}
@@ -289,7 +290,7 @@ class InterfaceManager:
         self._is_analysis_running = start
 
         if start:
-            session_id = self.start_new_session()
+            session_id = self.start_new_session(face_id=face_id)
             return {"session_id": session_id}
         else:
             if self._current_session_id:
@@ -458,6 +459,13 @@ class InterfaceManager:
         if self._preprocessing_callback:
             return self._preprocessing_callback("query_face_registry", {})
         return {"success": False, "faces": [], "msg": "预处理模块未连接"}
+
+    def delete_face(self, face_id: str) -> Dict[str, Any]:
+        """指令：删除已注册人脸，通知预处理模块清除内存注册表"""
+        print(f"[InterfaceManager] 删除人脸: face_id={face_id}")
+        if self._preprocessing_callback:
+            return self._preprocessing_callback("delete_face", {"face_id": face_id})
+        return {"success": True, "msg": "预处理模块未连接，仅清除数据库"}
 
     def set_preprocessing_callback(self, callback: Callable[[str, Dict], Optional[Dict]]):
         """设置预处理模块回调（用于指令下发）"""

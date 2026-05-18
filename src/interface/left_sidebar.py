@@ -4,7 +4,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QFrame, QVBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QWidget, QHBoxLayout, QPushButton, QCheckBox,
+    QWidget, QHBoxLayout, QPushButton, QCheckBox, QMenu, QAction,
 )
 
 from .config import LEFT_BAR_WIDTH
@@ -16,6 +16,7 @@ class LeftSideBar(QFrame):
     camera_selected = pyqtSignal(int)
     refresh_requested = pyqtSignal()
     face_selected = pyqtSignal(str)
+    face_delete_requested = pyqtSignal(str)
     show_bbox_toggled = pyqtSignal(bool)
 
     def __init__(self, parent=None):
@@ -72,7 +73,9 @@ class LeftSideBar(QFrame):
         self.face_list.setStyleSheet(get_style("list_widget"))
         self.face_list.setSelectionMode(QListWidget.SingleSelection)
         self.face_list.setCursor(Qt.PointingHandCursor)
+        self.face_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.face_list.itemClicked.connect(self._on_face_item_clicked)
+        self.face_list.customContextMenuRequested.connect(self._on_face_context_menu)
         layout.addWidget(face_title)
         layout.addWidget(self.face_list)
         layout.addStretch()
@@ -205,6 +208,9 @@ class LeftSideBar(QFrame):
             return item.data(Qt.UserRole)
         return None
 
+    def set_faces_enabled(self, enabled: bool):
+        self.face_list.setEnabled(enabled)
+
     def has_faces(self) -> bool:
         return self.face_list.count() > 0
 
@@ -213,6 +219,33 @@ class LeftSideBar(QFrame):
         self.face_list.setCurrentItem(item)
         self.face_selected.emit(face_id)
         print(f"[LeftSideBar] 选择人脸: face_id={face_id}")
+
+    def _on_face_context_menu(self, pos):
+        item = self.face_list.itemAt(pos)
+        if item is None:
+            return
+        face_id = item.data(Qt.UserRole)
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {COLORS['card']};
+                color: {COLORS['text']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 8px 32px;
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{
+                background-color: {COLORS['card_hover']};
+            }}
+        """)
+        delete_action = QAction("删除人脸", menu)
+        delete_action.triggered.connect(lambda: self.face_delete_requested.emit(face_id))
+        menu.addAction(delete_action)
+        menu.exec_(self.face_list.mapToGlobal(pos))
 
     # ──────────────────── 事件 ────────────────────
 

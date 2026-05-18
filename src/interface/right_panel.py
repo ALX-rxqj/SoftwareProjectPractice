@@ -191,7 +191,7 @@ class RightPanel(QFrame):
         for key in ["head_pose", "behavior", "expression", "evidence", "people"]:
             if key in score_dict:
                 val = score_dict[key]
-                self.score_items[key]["label"].setText(str(val))
+                self.score_items[key]["label"].setText(f"{val:.1f}")
                 self.score_items[key]["progress"].setValue(int(val))
                 color = _progress_color(val)
                 self.score_items[key]["progress"].setStyleSheet(

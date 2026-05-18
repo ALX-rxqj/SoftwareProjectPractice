@@ -236,6 +236,15 @@ class MockDataManager:
             "main_face_id": 1 if num_faces > 0 else -1
         }
 
+    def delete_face(self, face_id: str) -> Dict[str, Any]:
+        """从模拟列表中移除指定人脸"""
+        if face_id in self._simulated_face_ids:
+            self._simulated_face_ids.remove(face_id)
+            print(f"[MockDataManager] 已移除模拟人脸: {face_id}")
+            return {"success": True, "deleted_face_id": face_id}
+        return {"success": False, "deleted_face_id": face_id,
+                "msg": f"未找到 face_id={face_id}"}
+
     def generate_face_ids(self) -> List[str]:
         """生成模拟学生ID列表"""
         return self._simulated_face_ids.copy()
