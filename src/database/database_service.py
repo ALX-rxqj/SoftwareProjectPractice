@@ -41,13 +41,13 @@ class DatabaseService:
         self._schema_mgr.ensure_schema(self._conn_mgr.get_connection())
         print(f"[DatabaseService] 数据库初始化完成: {db_path}")
 
-    def handle_command(self, command: str, params: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    def handle_command(self, command: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
         """命令路由：兼容 DatabaseCommandAdapter 的回调接口"""
         handler = self._command_handlers.get(command)
         if handler is not None:
             return handler(params)
         print(f"[DatabaseService] 未知命令: {command}")
-        return None
+        return []
 
     # ────────────────── 人脸注册 ──────────────────
 
@@ -59,17 +59,32 @@ class DatabaseService:
             student_name: 学生姓名
             created_at: 注册时间戳
         """
+        if not face_id or not student_name or not created_at:
+            print(f"[DatabaseService] register_face 缺少必填字段: face_id={face_id!r}, "
+                  f"student_name={student_name!r}, created_at={created_at!r}")
+            return False
+
         sql = ("INSERT OR REPLACE INTO registered_faces (face_id, student_name, created_at) "
                "VALUES (?, ?, ?)")
-        try:
-            conn = self._conn_mgr.get_connection()
-            conn.execute(sql, (face_id, student_name, created_at))
-            conn.commit()
-            print(f"[DatabaseService] 已注册人脸: {face_id} ({student_name})")
-            return True
-        except sqlite3.Error as e:
-            print(f"[DatabaseService] 注册人脸失败: {e}")
-            return False
+        last_error = None
+        for attempt in range(3):
+            try:
+                conn = self._conn_mgr.get_connection()
+                conn.execute(sql, (face_id, student_name, created_at))
+                conn.commit()
+                print(f"[DatabaseService] 已注册人脸: {face_id} ({student_name})")
+                return True
+            except sqlite3.Error as e:
+                last_error = e
+                print(f"[DatabaseService] 注册人脸失败 (第{attempt+1}次): {e}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                if attempt < 2:
+                    time.sleep(0.1)
+        print(f"[DatabaseService] 注册人脸最终失败: {last_error}")
+        return False
 
     # ────────────────── 会话管理 ──────────────────
 
@@ -80,22 +95,38 @@ class DatabaseService:
             session: {"session_id": str, "student_id": str|None,
                        "mode": "class"|"exam", "start_time": float}
         """
+        required = ["session_id", "mode", "start_time"]
+        missing = [k for k in required if k not in session or session[k] is None]
+        if missing:
+            print(f"[DatabaseService] create_session 缺少必填字段: {missing}")
+            return False
+
         sql = ("INSERT INTO sessions (session_id, student_id, mode, start_time) "
                "VALUES (?, ?, ?, ?)")
-        try:
-            conn = self._conn_mgr.get_connection()
-            conn.execute(sql, (
-                session["session_id"],
-                session.get("student_id"),
-                session["mode"],
-                session["start_time"],
-            ))
-            conn.commit()
-            print(f"[DatabaseService] 会话已创建: {session['session_id']}")
-            return True
-        except sqlite3.Error as e:
-            print(f"[DatabaseService] 创建会话失败: {e}")
-            return False
+        last_error = None
+        for attempt in range(3):
+            try:
+                conn = self._conn_mgr.get_connection()
+                conn.execute(sql, (
+                    session["session_id"],
+                    session.get("student_id"),
+                    session["mode"],
+                    session["start_time"],
+                ))
+                conn.commit()
+                print(f"[DatabaseService] 会话已创建: {session['session_id']}")
+                return True
+            except sqlite3.Error as e:
+                last_error = e
+                print(f"[DatabaseService] 创建会话失败 (第{attempt+1}次): {e}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                if attempt < 2:
+                    time.sleep(0.1)
+        print(f"[DatabaseService] 创建会话最终失败: {last_error}")
+        return False
 
     def end_session(self, session_id: str, end_time: float) -> bool:
         """结束会话，同时通过 SQL 聚合计算 avg_focus_score 和 abnormal_event_count
@@ -104,6 +135,11 @@ class DatabaseService:
             session_id: 会话标识
             end_time: 结束时间戳
         """
+        if not session_id or not end_time:
+            print(f"[DatabaseService] end_session 缺少必填字段: "
+                  f"session_id={session_id!r}, end_time={end_time!r}")
+            return False
+
         sql = """
             UPDATE sessions SET
                 end_time = ?,
@@ -117,15 +153,25 @@ class DatabaseService:
                 )
             WHERE session_id = ?
         """
-        try:
-            conn = self._conn_mgr.get_connection()
-            conn.execute(sql, (end_time, session_id, session_id, session_id))
-            conn.commit()
-            print(f"[DatabaseService] 会话已结束: {session_id}")
-            return True
-        except sqlite3.Error as e:
-            print(f"[DatabaseService] 结束会话失败: {e}")
-            return False
+        last_error = None
+        for attempt in range(3):
+            try:
+                conn = self._conn_mgr.get_connection()
+                conn.execute(sql, (end_time, session_id, session_id, session_id))
+                conn.commit()
+                print(f"[DatabaseService] 会话已结束: {session_id}")
+                return True
+            except sqlite3.Error as e:
+                last_error = e
+                print(f"[DatabaseService] 结束会话失败 (第{attempt+1}次): {e}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                if attempt < 2:
+                    time.sleep(0.1)
+        print(f"[DatabaseService] 结束会话最终失败: {last_error}")
+        return False
 
     # ────────────────── 评分记录批量写入 ──────────────────
 
@@ -147,6 +193,12 @@ class DatabaseService:
         """
         if not records:
             return True
+
+        # 校验每条记录必填字段
+        invalid = [i for i, r in enumerate(records) if not r.get("session_id") or not r.get("timestamp")]
+        if invalid:
+            print(f"[DatabaseService] 批量写入校验失败: 第{invalid}条缺少 session_id 或 timestamp")
+            return False
 
         focus_sql = """
             INSERT INTO focus_records (
@@ -218,6 +270,9 @@ class DatabaseService:
 
     def query_sessions(self, filter_params: Dict[str, Any]) -> List[Dict[str, Any]]:
         """DBI-01: 按筛选条件查询会话列表"""
+        if filter_params is None:
+            print("[DatabaseService] query_sessions 参数不能为 None")
+            return []
         return self._query_sessions_handler(filter_params)
 
     def _query_sessions_handler(self, filter_params: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -273,6 +328,9 @@ class DatabaseService:
 
     def query_focus_records(self, session_id: str) -> List[Dict[str, Any]]:
         """查询指定会话的专注度评分记录（界面模块调用）"""
+        if not session_id:
+            print("[DatabaseService] query_focus_records: session_id 不能为空")
+            return []
         return self._query_records_handler({"session_id": session_id})
 
     def _query_records_handler(self, params: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -293,6 +351,9 @@ class DatabaseService:
 
     def query_alert_events(self, session_id: str) -> List[Dict[str, Any]]:
         """查询指定会话的告警事件（预留，当前 UI 未使用）"""
+        if not session_id:
+            print("[DatabaseService] query_alert_events: session_id 不能为空")
+            return []
         sql = "SELECT * FROM alert_events WHERE session_id = ? ORDER BY timestamp ASC"
         try:
             conn = self._conn_mgr.get_connection()
@@ -301,6 +362,41 @@ class DatabaseService:
         except sqlite3.Error as e:
             print(f"[DatabaseService] 查询告警事件失败: {e}")
             return []
+
+    def delete_sessions(self, session_ids: List[str]) -> Dict[str, Any]:
+        """批量删除会话及关联数据（CASCADE 自动删除 focus_records + alert_events）
+
+        Args:
+            session_ids: 要删除的会话 ID 列表
+
+        Returns:
+            {"deleted_count": N, "total": M}
+        """
+        if not session_ids:
+            return {"deleted_count": 0, "total": 0}
+
+        sql = "DELETE FROM sessions WHERE session_id = ?"
+        total = len(session_ids)
+        deleted_count = 0
+
+        try:
+            conn = self._conn_mgr.get_connection()
+            conn.execute("BEGIN")
+            for sid in session_ids:
+                cursor = conn.execute(sql, (sid,))
+                deleted_count += cursor.rowcount
+            conn.commit()
+            print(f"[DatabaseService] 已删除 {deleted_count}/{total} 条会话")
+        except sqlite3.Error as e:
+            print(f"[DatabaseService] 删除会话失败: {e}")
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            deleted_count = 0
+            return {"deleted_count": deleted_count, "total": total}
+
+        return {"deleted_count": deleted_count, "total": total}
 
     def shutdown(self) -> None:
         """关闭数据库连接"""

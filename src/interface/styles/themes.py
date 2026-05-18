@@ -127,6 +127,23 @@ def get_style(style_name: str) -> str:
             }}
         """,
 
+        "button_select": f"""
+            QPushButton {{
+                color: {COLORS['text_secondary']};
+                background-color: #3A3A60;
+                border: 1px solid {COLORS['border_light']};
+                border-radius: {SIZES['radius']['base']}px;
+                height: {SIZES['button']['height']}px;
+            }}
+            QPushButton:hover {{
+                background-color: #46467A;
+                border-color: #5A5A90;
+            }}
+            QPushButton:pressed {{
+                background-color: #2E2E50;
+            }}
+        """,
+
         "button_secondary": f"""
             QPushButton {{
                 color: {COLORS['text_secondary']};

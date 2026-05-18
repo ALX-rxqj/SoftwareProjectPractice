@@ -288,12 +288,14 @@ class InterfaceManager:
         mode_str = self._current_mode.value  # "class" or "exam"
         print(f"[InterfaceManager] 创建新会话: {self._current_session_id}")
 
-        database_service.create_session({
+        ok = database_service.create_session({
             "session_id": self._current_session_id,
             "student_id": student_id,
             "mode": mode_str,
             "start_time": start_time,
         })
+        if not ok:
+            print(f"[InterfaceManager] ⚠ 会话写入数据库失败！session_id={self._current_session_id}")
 
         if self._state_estimation_callback:
             self._state_estimation_callback("toggle_analysis", {
@@ -327,7 +329,9 @@ class InterfaceManager:
             })
 
         # 数据库模块更新 end_time + 聚合计算
-        database_service.end_session(session_id, end_time)
+        ok = database_service.end_session(session_id, end_time)
+        if not ok:
+            print(f"[InterfaceManager] ⚠ 会话结束更新数据库失败！session_id={session_id}")
 
         if session_id == self._current_session_id:
             self._current_session_id = None

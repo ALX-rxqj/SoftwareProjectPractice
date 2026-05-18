@@ -164,21 +164,31 @@ class SchemaManager:
         return SchemaManager.CURRENT_VERSION
 
     def ensure_schema(self, connection: sqlite3.Connection) -> None:
-        """执行建表与索引创建（幂等）
+        """执行建表与索引创建（幂等），通过 PRAGMA user_version 管理版本
 
         Args:
             connection: sqlite3.Connection，由 ConnectionManager 提供
         """
-        statements = self._DDL.get(SchemaManager.CURRENT_VERSION, [])
         cursor = connection.cursor()
-        for stmt in statements:
-            try:
-                cursor.execute(stmt)
-            except sqlite3.Error as e:
-                print(f"[SchemaManager] DDL 执行失败: {e}\n  SQL: {stmt[:100]}...")
-                raise
+        db_version = cursor.execute("PRAGMA user_version").fetchone()[0]
+        target_version = SchemaManager.CURRENT_VERSION
+
+        if db_version >= target_version:
+            print(f"[SchemaManager] Schema v{db_version} 已是最新，无需迁移")
+            return
+
+        print(f"[SchemaManager] 数据库版本 v{db_version} → v{target_version}，开始迁移...")
+        for version in range(db_version + 1, target_version + 1):
+            statements = self._DDL.get(version, [])
+            for stmt in statements:
+                try:
+                    cursor.execute(stmt)
+                except sqlite3.Error as e:
+                    print(f"[SchemaManager] DDL 执行失败 (v{version}): {e}\n  SQL: {stmt[:100]}...")
+                    raise
+            cursor.execute(f"PRAGMA user_version = {version}")
         connection.commit()
-        print(f"[SchemaManager] Schema v{SchemaManager.CURRENT_VERSION} 就绪")
+        print(f"[SchemaManager] Schema v{target_version} 就绪")
 
 
 schema_manager = SchemaManager()

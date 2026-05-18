@@ -395,7 +395,7 @@ class UnifiedDataManager:
 
     def generate_alarm_events(self, session_id: str) -> List[Dict[str, Any]]:
         if self._database_source == DataSource.REAL:
-            return []
+            return database_service.query_alert_events(session_id)
         return mock_data_manager.generate_alarm_events(session_id)
 
     # ──────────────────── 摄像头列表 ────────────────────
@@ -565,6 +565,23 @@ class UnifiedDataManager:
         except Exception as e:
             print(f"[UnifiedDataManager] 状态估计模块初始化失败: {e}")
             return False
+
+    def delete_sessions(self, session_ids: List[str]) -> Dict[str, Any]:
+        """删除会话及关联数据
+
+        Args:
+            session_ids: 要删除的会话 ID 列表
+
+        Returns:
+            {"deleted_count": N, "total": M}
+        """
+        print(f"[UnifiedDataManager] 删除会话请求: {len(session_ids)} 条")
+        if self._database_source == DataSource.REAL:
+            result = database_service.delete_sessions(session_ids)
+        else:
+            result = mock_data_manager.delete_sessions(session_ids)
+        print(f"[UnifiedDataManager] 删除完成: {result['deleted_count']}/{result['total']}")
+        return result
 
     def clear_cache(self):
         mock_data_manager.clear_cache()
