@@ -73,7 +73,7 @@ class UnifiedDataManager:
 
         # 各模块独立数据源控制
         self._preprocessing_source: DataSource = DataSource.REAL
-        self._state_estimation_source: DataSource = DataSource.MOCK
+        self._state_estimation_source: DataSource = DataSource.REAL
         self._database_source: DataSource = DataSource.REAL
 
         self._video_frame_callback: Optional[Callable[[VideoFrameData], None]] = None
