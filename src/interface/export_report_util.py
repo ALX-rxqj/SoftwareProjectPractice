@@ -55,7 +55,7 @@ def _generate_focus_chart_image(records: list) -> BytesIO:
     ax.set_title("专注度评分变化趋势", fontsize=14, color="#333333")
     ax.set_xlabel("采样点", fontsize=10, color="#666666")
     ax.set_ylabel("评分", fontsize=10, color="#666666")
-    ax.set_ylim(0, 100)
+    ax.set_ylim(0, 120)
     ax.grid(True, linestyle="--", alpha=0.3)
     ax.tick_params(axis="both", colors="#666666")
     for spine in ax.spines.values():
