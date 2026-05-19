@@ -5,7 +5,7 @@ from .config import WINDOW_WIDTH, WINDOW_HEIGHT, TOP_NAV_HEIGHT, LEFT_BAR_WIDTH,
 from .styles import get_style, get_spacing, SIZES, COLORS
 from .top_nav_bar import TopNavBar
 from .left_sidebar import LeftSideBar
-from .video_widget import VideoWidget
+from .video_widget import VideoWidget, ToastWidget
 from .right_panel import RightPanel
 from .filter_sidebar import FilterSidebar
 from .data_record_widget import DataRecordWidget
@@ -28,6 +28,7 @@ class MainWindow(QMainWindow):
         self.current_device_id = 0
         self._init_poll_timer = None
         self.init_ui()
+        self.toast_widget = ToastWidget(anchor=self.video_widget)
         self.connect_signals()
         self._start_async_init()
 
@@ -181,7 +182,8 @@ class MainWindow(QMainWindow):
         self.top_nav_query.mode_changed.connect(self.on_mode_changed)
         self.right_panel.start_analysis.connect(self.on_start_analysis)
         self.right_panel.stop_analysis.connect(self.on_stop_analysis)
-        self.right_panel.toast_requested.connect(self.video_widget.show_toast)
+        self.right_panel.toast_requested.connect(self.toast_widget.show_toast)
+        self.right_panel.toast_dismiss_requested.connect(self.toast_widget.dismiss)
         self.right_panel.set_start_validator(self._validate_start_analysis)
         self.filter_sidebar.filter_applied.connect(self.on_filter_applied)
         self.filter_sidebar.chart_options_changed.connect(self.on_chart_options_changed)
@@ -342,7 +344,7 @@ class MainWindow(QMainWindow):
 
     def on_stop_analysis(self):
         print("[MainWindow] 停止分析")
-        self.video_widget.dismiss_toast()
+        self.toast_widget.dismiss()
         self.video_widget.stop_processing()
 
         result = unified_data_manager.toggle_capture(device_id=self.current_device_id, start=False)

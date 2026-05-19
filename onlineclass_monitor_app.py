@@ -9,6 +9,8 @@ from src.interface import MainWindow
 
 def main():
     app = QApplication(sys.argv)
+    app.setOrganizationName("OnlineClassMonitor")
+    app.setApplicationName("NetClassFocusAnalyzer")
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())

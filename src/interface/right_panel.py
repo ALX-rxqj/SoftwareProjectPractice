@@ -1,9 +1,9 @@
 import pyqtgraph as pg
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QSettings
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QProgressBar,
-    QWidget,
+    QWidget, QCheckBox,
 )
 
 from .config import RIGHT_PANEL_WIDTH
@@ -25,6 +25,7 @@ class RightPanel(QFrame):
     stop_analysis = pyqtSignal()
     score_updated = pyqtSignal(dict)
     toast_requested = pyqtSignal(str, str)
+    toast_dismiss_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -33,6 +34,7 @@ class RightPanel(QFrame):
         self.setGraphicsEffect(create_card_shadow(elevated=True))
         self.is_running = False
         self._start_validator = None
+        self._toast_enabled = QSettings().value("toast/enabled", True, type=bool)
         self.init_ui()
         self.score_updated.connect(self.update_scores)
 
@@ -48,7 +50,7 @@ class RightPanel(QFrame):
         }
         self.score_updated.emit(score_dict)
 
-        if data.warn_msg:
+        if data.warn_msg and self._toast_enabled:
             self.toast_requested.emit(
                 data.warn_msg.get("type", ""),
                 data.warn_msg.get("detail", ""),
@@ -171,6 +173,17 @@ class RightPanel(QFrame):
 
         layout.addStretch()
 
+        # ---- 弹窗提醒开关 ----
+        self.toast_enabled_checkbox = QCheckBox("分析时弹窗提醒")
+        self.toast_enabled_checkbox.setChecked(self._toast_enabled)
+        self.toast_enabled_checkbox.setCursor(Qt.PointingHandCursor)
+        self.toast_enabled_checkbox.setFont(QFont(*get_font("sm", "normal", "ui")))
+        self.toast_enabled_checkbox.setStyleSheet(
+            f"color: {COLORS['text_hint']};"
+        )
+        self.toast_enabled_checkbox.toggled.connect(self._on_toast_toggle)
+        layout.addWidget(self.toast_enabled_checkbox)
+
         # ---- 控制按钮 ----
         self.control_btn = QPushButton("▶  开始分析")
         self.control_btn.setFixedHeight(50)
@@ -236,6 +249,12 @@ class RightPanel(QFrame):
         self.curve_data = [0.0] * 50
         self.curve_line.setData(self.curve_data)
         self.curve_fill.setData(self.curve_data)
+
+    def _on_toast_toggle(self, checked: bool):
+        self._toast_enabled = checked
+        QSettings().setValue("toast/enabled", checked)
+        if not checked:
+            self.toast_dismiss_requested.emit()
 
     def on_control_click(self):
         if not self.is_running:

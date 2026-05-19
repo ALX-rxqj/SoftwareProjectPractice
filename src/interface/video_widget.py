@@ -25,7 +25,7 @@ class ToastWidget(QFrame):
     def __init__(self, anchor=None):
         super().__init__(None)
         self.setWindowFlags(
-            Qt.Tool | Qt.FramelessWindowHint
+            Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
@@ -325,14 +325,7 @@ class VideoWidget(QFrame):
         self.video_label.setStyleSheet(get_style("video_placeholder"))
         layout.addWidget(self.video_label)
 
-        # ---- 告警 Toast ----
-        self.toast = ToastWidget(anchor=self)
 
-    def show_toast(self, alert_type: str, detail: str):
-        self.toast.show_toast(alert_type, detail)
-
-    def dismiss_toast(self):
-        self.toast.dismiss()
 
     def start_processing(self):
         self.is_running = True
