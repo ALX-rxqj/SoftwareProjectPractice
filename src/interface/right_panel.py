@@ -221,7 +221,13 @@ class RightPanel(QFrame):
     def generate_simulated_data(self):
         score_dict = unified_data_manager.generate_realtime_scores()
         if score_dict:
+            warn_info = score_dict.pop("warn_info", None)
             self.score_updated.emit(score_dict)
+            if warn_info:
+                self.toast_requested.emit(
+                    warn_info.get("type", ""),
+                    warn_info.get("detail", ""),
+                )
 
     def set_start_validator(self, validator):
         """设置开始分析前的验证回调。validator 返回 (bool, str)，True 表示通过。"""
