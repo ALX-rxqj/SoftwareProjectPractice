@@ -1,11 +1,13 @@
 """数据库连接管理器（单例）
 
 提供 SQLite 连接的创建、获取和关闭。
-支持线程安全、连接健康检查和自动重连。
+支持线程安全、连接健康检查、自动重连和加密。
 """
 
-import sqlite3
+import hashlib
 from typing import Optional
+
+from sqlcipher3 import dbapi2 as sqlite3
 
 
 class ConnectionManager:
@@ -25,19 +27,40 @@ class ConnectionManager:
         self._initialized = True
         self._connection: Optional[sqlite3.Connection] = None
         self._db_path: Optional[str] = None
+        self._key: Optional[bytes] = None
+
+    @staticmethod
+    def _derive_key() -> bytes:
+        """从 Windows MachineGuid 派生 256 位加密密钥"""
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\Microsoft\Cryptography"
+            )
+            guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+            winreg.CloseKey(key)
+        except Exception as e:
+            raise RuntimeError(
+                f"无法获取机器指纹，数据库加密初始化失败: {e}"
+            ) from e
+        return hashlib.sha256(guid.encode()).digest()
 
     def initialize(self, db_path: str) -> None:
-        """打开（或创建）指定路径的 SQLite 数据库"""
+        """打开（或创建）指定路径的加密 SQLite 数据库"""
         if self._connection is not None:
             self.close()
+        if self._key is None:
+            self._key = self._derive_key()
         self._db_path = db_path
         self._connection = sqlite3.connect(
             db_path, check_same_thread=False, timeout=5.0
         )
         self._connection.row_factory = sqlite3.Row
+        self._connection.execute(f"PRAGMA key = \"x'{self._key.hex()}'\"")
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA foreign_keys = ON")
-        print(f"[ConnectionManager] 已连接数据库: {db_path}")
+        print(f"[ConnectionManager] 已连接加密数据库: {db_path}")
 
     def get_connection(self) -> sqlite3.Connection:
         """获取当前数据库连接，自动检测并恢复失效连接"""
