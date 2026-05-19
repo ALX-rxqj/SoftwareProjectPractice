@@ -20,12 +20,12 @@ class ToastState(Enum):
 
 
 class ToastWidget(QFrame):
-    """悬浮告警提示，淡入淡出，2 秒自动消失。顶层悬浮窗口，不参与父控件布局。"""
+    """悬浮告警提示，淡入淡出。Qt.Tool 窗口跟随父窗口生命周期，失焦自动隐藏。"""
 
     def __init__(self, anchor=None):
         super().__init__(None)
         self.setWindowFlags(
-            Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+            Qt.Tool | Qt.FramelessWindowHint
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
