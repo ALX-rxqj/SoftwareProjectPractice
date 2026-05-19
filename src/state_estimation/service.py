@@ -27,6 +27,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import random
 import threading
 import time
@@ -75,6 +77,14 @@ class StateEstimationService:
         # 模拟评分记录缓存（用于 on_query_records 的 MOCK 模式）
         self._mock_records_cache: Dict[str, List[Dict[str, Any]]] = {}
 
+        # 数据库写入
+        self._db_buffer: List[Dict[str, Any]] = []
+        self._write_callback: Optional[Callable[[List[Dict[str, Any]]], Any]] = None
+
+        # 快照
+        self._snapshot_dir = "snapshots"
+        self._snapshot_timer: Optional[threading.Timer] = None
+
     # ==================== 回调注册 ====================
 
     def set_preprocessing_callback(self, callback: CommandCallback):
@@ -111,6 +121,11 @@ class StateEstimationService:
             callback: 日志输出回调
         """
         self._log_callback = callback
+
+    def set_record_writer(self, callback: Callable[[List[Dict[str, Any]]], Any]):
+        """设置数据库写回调，由 UnifiedDataManager 注入"""
+        self._write_callback = callback
+        self._log("数据库写回调已设置")
 
     # ================================================================
     # 对外公开接口（on_* 系列）
@@ -185,31 +200,42 @@ class StateEstimationService:
 
     # --- 本模块处理类指令 ---
 
-    def on_control_analysis(self, start: bool) -> Dict[str, Any]:
+    def on_control_analysis(self, start: bool, session_id: str = "",
+                            mode: str = "") -> Dict[str, Any]:
         """
         启动/停止专注度分析
 
         由状态估计模块直接处理，控制评分计算的启停。
-        启动时自动创建新会话并返回 session_id。
+        启动时若传入 session_id 则复用，否则自动创建。
 
         Args:
             start: True=启动分析, False=停止分析
+            session_id: 外部传入的会话ID（可选，由 interface_manager 生成）
+            mode: 监督模式（可选）
 
         Returns:
             启动时: {"session_id": str}
             停止时: {"success": bool}
         """
-        self._log(f"on_control_analysis: start={start}")
+        self._log(f"on_control_analysis: start={start}, session_id={session_id}, mode={mode}")
 
         if start:
-            # 启动分析：创建会话并启动处理线程
-            session_id = self._session_manager.create_session()
+            # 启动分析：使用传入的 session_id 或自动创建
+            if session_id:
+                monitor_mode = MonitorMode.EXAM if mode.lower() == "exam" else MonitorMode.CLASS
+                self._session_manager.adopt_session(session_id, monitor_mode)
+                self._estimator.set_mode(monitor_mode)
+            else:
+                session_id = self._session_manager.create_session()
             self._start_processing()
+            self._schedule_snapshot()
             return {"session_id": session_id}
         else:
             # 停止分析：停止处理线程并结束会话
             self._stop_processing()
-            if self._session_manager.current_session_id:
+            if session_id:
+                self._session_manager.end_session(session_id)
+            elif self._session_manager.current_session_id:
                 self._session_manager.end_session(self._session_manager.current_session_id)
             return {"success": True}
 
@@ -249,6 +275,8 @@ class StateEstimationService:
 
         try:
             success = self._session_manager.end_session(session_id)
+            self._cancel_snapshot_timer()
+            self._flush_db_buffer()
             return {"success": success}
         except ValueError as e:
             return {"success": False, "msg": str(e)}
@@ -499,6 +527,8 @@ class StateEstimationService:
             # 本模块处理类指令
             "toggle_analysis": lambda p: self.on_control_analysis(
                 start=p.get("start", False),
+                session_id=p.get("session_id", ""),
+                mode=p.get("mode", ""),
             ),
             "start_new_session": lambda p: self.on_session_init(),
             "start_session": lambda p: self.on_session_init(),
@@ -635,6 +665,10 @@ class StateEstimationService:
         downsampled = self._downsampler.add_frame(result)
         if downsampled is not None:
             self._dispatch_focus_result(downsampled)
+            # 收集同窗口的 DB 降采样帧
+            db_frame = self._downsampler.get_db_frame()
+            if db_frame is not None:
+                self._db_buffer.append(db_frame.to_dict())
 
         # 更新会话统计（所有帧都统计，不经过降采样）
         if session_id:
@@ -683,6 +717,7 @@ class StateEstimationService:
 
         self._is_processing = False
         self._stop_event.set()
+        self._cancel_snapshot_timer()
 
         if self._processing_thread and self._processing_thread.is_alive():
             self._processing_thread.join(timeout=2.0)
@@ -691,6 +726,12 @@ class StateEstimationService:
         remaining = self._downsampler.flush()
         if remaining:
             self._dispatch_focus_result(remaining)
+            db_frame = self._downsampler.get_db_frame()
+            if db_frame is not None:
+                self._db_buffer.append(db_frame.to_dict())
+
+        # 刷库
+        self._flush_db_buffer()
 
         self._log("专注度分析已停止")
 
@@ -842,6 +883,56 @@ class StateEstimationService:
     # 服务生命周期
     # ================================================================
 
+    def _flush_db_buffer(self):
+        """将缓冲的评分记录批量写入数据库"""
+        if self._write_callback and self._db_buffer:
+            try:
+                self._write_callback(self._db_buffer)
+                self._log(f"已写入 {len(self._db_buffer)} 条评分记录到数据库")
+                self._delete_snapshot()
+            except Exception as e:
+                self._log(f"数据库写入失败: {e}")
+            finally:
+                self._db_buffer.clear()
+
+    def _schedule_snapshot(self):
+        """启动快照定时器：每 5 分钟写一次本地 JSON"""
+        self._save_snapshot()
+        if self._is_processing:
+            self._snapshot_timer = threading.Timer(300, self._schedule_snapshot)
+            self._snapshot_timer.daemon = True
+            self._snapshot_timer.start()
+
+    def _save_snapshot(self):
+        """将 _db_buffer 写入 snapshots/<session_id>.json"""
+        session_id = self._session_manager.current_session_id
+        if not session_id or not self._db_buffer:
+            return
+        try:
+            os.makedirs(self._snapshot_dir, exist_ok=True)
+            path = os.path.join(self._snapshot_dir, f"{session_id}.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self._db_buffer, f, ensure_ascii=False, indent=2)
+        except OSError as e:
+            self._log(f"快照写入失败: {e}")
+
+    def _delete_snapshot(self):
+        """刷库成功后删除快照文件"""
+        session_id = self._session_manager.current_session_id
+        if not session_id:
+            return
+        path = os.path.join(self._snapshot_dir, f"{session_id}.json")
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError as e:
+            self._log(f"快照删除失败: {e}")
+
+    def _cancel_snapshot_timer(self):
+        if self._snapshot_timer is not None:
+            self._snapshot_timer.cancel()
+            self._snapshot_timer = None
+
     def _log(self, message: str):
         """输出日志"""
         if self._log_callback:
@@ -867,4 +958,5 @@ class StateEstimationService:
         self._estimator.reset()
         self._downsampler.reset()
         self._mock_records_cache.clear()
+        self._db_buffer.clear()
         self._log("状态估计服务已重置")

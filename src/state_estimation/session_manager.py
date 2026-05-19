@@ -81,6 +81,28 @@ class SessionManager:
 
         return session_id
 
+    def adopt_session(self, session_id: str, mode: MonitorMode = MonitorMode.CLASS,
+                      warn_threshold: float = 60.0) -> str:
+        """
+        接管外部已创建的会话（session_id 已由 interface_manager 写入数据库）
+
+        与 create_session 不同，此方法不生成新的 session_id，
+        直接使用传入的 ID 注册到内存中。
+        """
+        if self._current_session_id:
+            self.end_session(self._current_session_id)
+
+        session_info = SessionInfo(
+            session_id=session_id,
+            mode=mode,
+            start_time=time.time(),
+            warn_threshold=warn_threshold,
+            is_running=True,
+        )
+        self._sessions[session_id] = session_info
+        self._current_session_id = session_id
+        return session_id
+
     def end_session(self, session_id: str) -> bool:
         """
         结束指定会话
