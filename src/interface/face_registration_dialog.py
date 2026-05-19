@@ -40,6 +40,8 @@ class FaceRegistrationDialog(QDialog):
 
     registration_completed = pyqtSignal(dict)
     face_registration_success = pyqtSignal()
+    _preview_frame_ready = pyqtSignal(object)
+    _registration_result_ready = pyqtSignal(dict)
     _camera_started_externally = False
 
     def __init__(self, device_id: int, parent=None):
@@ -369,6 +371,8 @@ class FaceRegistrationDialog(QDialog):
 
     def connect_signals(self):
         self.finished.connect(self._cleanup)
+        self._preview_frame_ready.connect(self._render_frame)
+        self._registration_result_ready.connect(self._on_registration_result_ui)
 
     # ─── 生命周期 ─────────────────────────────────────
 
@@ -499,15 +503,13 @@ class FaceRegistrationDialog(QDialog):
     # ─── 采集页逻辑 ───────────────────────────────────
 
     def _on_frame_received(self, frame, faces, timestamp):
-        """接收摄像头帧：渲染 + 存入缓冲区"""
+        """接收摄像头帧（子线程安全：仅存缓冲区并 emit 信号）"""
         if not self._capture_started:
             return
         try:
             if frame is not None and len(frame.shape) == 3 and frame.shape[2] == 3:
-                # 存入缓冲区（深拷贝）
                 self._frame_buffer.append((frame.copy(), timestamp))
-                # 渲染到画面
-                self._render_frame(frame)
+                self._preview_frame_ready.emit(frame)
         except Exception as e:
             print(f"[FaceRegistrationDialog] 帧处理错误: {e}")
 
@@ -623,18 +625,19 @@ class FaceRegistrationDialog(QDialog):
         })
 
     def _on_registration_result(self, result: dict):
-        """预处理模块异步返回的人脸注册结果"""
+        """预处理模块异步返回的人脸注册结果（子线程安全：仅清理回调和 emit 信号）"""
         unified_data_manager.clear_face_registration_result_callback()
+        self._registration_result_ready.emit(result)
 
+    def _on_registration_result_ui(self, result: dict):
+        """在主线程执行注册结果的 UI 更新"""
         if result.get("success"):
             student_name = result.get("student_name", self._student_name)
             face_id = result.get("face_id", "")
-            # 更新处理页为成功状态
             self.processing_spinner.setText("✓")
             self.processing_spinner.setStyleSheet(
                 f"color: {COLORS['success']}; background: transparent;"
             )
-            # 更新文字
             for child in self.stacked.widget(2).children():
                 if isinstance(child, QLabel) and "正在处理" in (child.text() or ""):
                     child.setText(f"注册成功\n学生: {student_name}\nID: {face_id}")

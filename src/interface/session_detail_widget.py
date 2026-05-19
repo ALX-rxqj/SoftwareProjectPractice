@@ -256,7 +256,7 @@ class SessionDetailWidget(QFrame):
         ax.set_title("专注度评分变化趋势", fontsize=12, color=COLORS["text"])
         ax.set_xlabel("时间 (秒)", fontsize=10, color=COLORS["text_hint"])
         ax.set_ylabel("评分", fontsize=10, color=COLORS["text_hint"])
-        ax.set_ylim(0, 100)
+        ax.set_ylim(0, 120)
         ax.grid(True, color=COLORS["border"], linestyle="--", alpha=0.4)
         ax.tick_params(axis="both", colors=COLORS["text_hint"])
         for spine in ax.spines.values():

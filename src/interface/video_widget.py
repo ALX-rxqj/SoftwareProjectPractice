@@ -225,6 +225,7 @@ class ToastWidget(QFrame):
 
 class VideoWidget(QFrame):
     frame_updated = pyqtSignal(dict)
+    _render_requested = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -235,17 +236,25 @@ class VideoWidget(QFrame):
         self._show_face_boxes = False
         self._current_face_boxes = []
         self.init_ui()
+        self._render_requested.connect(self._do_render)
 
     def render_frame(self, data):
+        """子线程安全：仅存储数据并 emit 信号，实际渲染由主线程 _do_render 执行"""
         if not self.is_running:
             return
         self.current_frame_data = data
         self._current_face_boxes = list(data.faces) if data.faces else []
-        self.update_frame(data)
         self.frame_updated.emit({
             "faces": data.faces,
             "timestamp": data.timestamp,
         })
+        self._render_requested.emit(data)
+
+    def _do_render(self, data):
+        """在主线程执行 Qt 渲染操作"""
+        if not self.is_running:
+            return
+        self.update_frame(data)
 
     def update_frame(self, processed_data=None):
         if processed_data is None:
