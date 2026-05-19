@@ -154,7 +154,7 @@ class ToastWidget(QFrame):
         self._dismiss_timer = QTimer(self)
         self._dismiss_timer.setSingleShot(True)
         self._dismiss_timer.timeout.connect(self._start_fade_out)
-        self._dismiss_timer.start(1600)
+        self._dismiss_timer.start(3000)
 
     def _start_fade_out(self):
         self._dismiss_timer = None

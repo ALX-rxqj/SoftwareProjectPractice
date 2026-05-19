@@ -26,6 +26,7 @@ class RightPanel(QFrame):
     start_analysis = pyqtSignal()
     stop_analysis = pyqtSignal()
     score_updated = pyqtSignal(dict)
+    toast_requested = pyqtSignal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -57,7 +58,7 @@ class RightPanel(QFrame):
         self.score_updated.emit(score_dict)
 
         if data.warn_msg:
-            self.parent().parent().video_widget.show_toast(
+            self.toast_requested.emit(
                 data.warn_msg.get("type", ""),
                 data.warn_msg.get("detail", ""),
             )

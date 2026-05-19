@@ -216,6 +216,7 @@ class MainWindow(QMainWindow):
         self.top_nav_query.mode_changed.connect(self.on_mode_changed)
         self.right_panel.start_analysis.connect(self.on_start_analysis)
         self.right_panel.stop_analysis.connect(self.on_stop_analysis)
+        self.right_panel.toast_requested.connect(self.video_widget.show_toast)
         self.right_panel.set_start_validator(self._validate_start_analysis)
         self.filter_sidebar.filter_applied.connect(self.on_filter_applied)
         self.filter_sidebar.chart_options_changed.connect(self.on_chart_options_changed)
@@ -365,18 +366,6 @@ class MainWindow(QMainWindow):
         self.top_nav.set_mode_buttons_enabled(False)
         self.top_nav_query.set_mode_buttons_enabled(False)
         self.left_sidebar.set_faces_enabled(False)
-
-        # TODO: 测试告警 Toast — 状态估计模块实现后删除
-        self._test_toast_triggers()
-
-    def _test_toast_triggers(self):
-        """依次触发多条测试 Toast，验证淡入淡出、替换、停止关闭。"""
-        QTimer.singleShot(2000, lambda: self.video_widget.show_toast(
-            "低分告警", "专注度低于阈值"
-        ))
-        QTimer.singleShot(4500, lambda: self.video_widget.show_toast(
-            "多人", "检测到多人出现"
-        ))
 
     def on_stop_analysis(self):
         print("[MainWindow] 停止分析")
