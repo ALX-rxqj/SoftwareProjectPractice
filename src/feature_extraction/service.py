@@ -36,8 +36,8 @@ from .io_interface import IOInterface
 # 类型别名
 ScoringCallback = Callable[[Dict[str, Any]], None]
 LogCallback = Callable[[str], None]
-# state callback: timestamp, face_id, features -> None
-StateCallback = Callable[[float, Any, Dict[str, Any]], None]
+# state callback: full feature_extraction output dict -> None
+StateCallback = Callable[[Dict[str, Any]], None]
 
 
 class FeatureExtractionService:
@@ -129,25 +129,21 @@ class FeatureExtractionService:
             
             # 构造一个 wrapper，在调用 scoring 回调的同时把 FEI-01 格式数据发送给状态估计模块
             def _send_wrapper(output: Dict[str, Any]) -> None:
-                # 先回调评分/下游
+                if isinstance(output, dict):
+                    output.setdefault('face_matched', bool(packet.get('face_matched', False)))
+
+                # 先回调评分/下游，输出保持完整结构：timestamp / face_id / face_matched / features
                 try:
                     self.scoring_callback(output)
                 except Exception:
                     # 保持容错，不阻塞后续处理
                     self.log_callback('scoring_callback 处理失败')
 
-                # 同步发送给状态估计（当注册了 state_callback 且有 owner_face_id 时）
+                # 同步发送给状态估计（转发完整输出字典，由状态估计模块自行解析 features）
                 try:
                     if self.state_callback and isinstance(output, dict):
-                        ts = float(output.get('timestamp', 0.0))
-                        face_id = output.get('face_id', -1)
-                        features = output.get('features', {})
-                        if face_id is not None and face_id != -1:
-                            # 按 FEI-01 规范转发 features
-                            try:
-                                self.state_callback(ts, face_id, features)
-                            except Exception:
-                                self.log_callback('state_callback 处理失败')
+                        # face_matched 已在 output 中保留，状态估计模块仅需要提取 features
+                        self.state_callback(output)
                 except Exception:
                     self.log_callback('向状态估计转发时发生错误')
 

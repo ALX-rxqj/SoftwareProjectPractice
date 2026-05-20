@@ -5,7 +5,6 @@
 当前版本会从摄像头或视频中检测人脸，并输出以下信息：
 
 - `head_pose`：头部姿态（`pitch` / `yaw` / `roll` / `confidence`）
-- `ear`：眼睛纵横比（EAR）
 - `eye_state`：是否睁眼（`0 = 睁眼`，`1 = 闭眼`）
 - `is_looking_screen`：是否看着屏幕
 - `num_face_total`：当前画面中的人脸数量
@@ -64,7 +63,6 @@ python main.py --video "D:\test.mp4" --face-id 1
 
 - `Pitch / Yaw / Roll`
 - `头部姿态置信度`
-- `EAR`
 - `Eye: Open / Closed`
 - `Look: Looking / Not looking`
 - `Faces: 当前人脸数量`
@@ -158,12 +156,6 @@ send_to_scoring(output)
             "roll": float,
             "confidence": float
         },
-        "ear": {
-            "left": float,
-            "right": float,
-            "value": float,
-            "confidence": float
-        },
         "eye_state": {
             "value": int,        # 0 = 睁眼, 1 = 闭眼
             "confidence": float
@@ -200,13 +192,6 @@ send_to_scoring(output)
 - `yaw`：偏航角
 - `roll`：滚转角
 - `confidence`：头部姿态置信度，范围为 0 到 1
-
-### `ear`
-
-- `left`：左眼 EAR
-- `right`：右眼 EAR
-- `value`：左右眼 EAR 平均值
-- `confidence`：眼睛状态相关置信度，范围为 0 到 1
 
 ### `eye_state`
 
@@ -258,6 +243,8 @@ send_to_scoring(output)
 ### 2. `Looking / Not looking` 判断不准
 
 这是基于头部姿态的启发式判断，不是严格的眼球视线跟踪。如果需要更高精度，可以后续增加专门的 gaze 模型。
+
+## 项目报告：特征提取模块与接口对接
 
 ### 3. 摄像头打不开
 
