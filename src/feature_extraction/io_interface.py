@@ -85,8 +85,9 @@ class IOInterface:
         """
         timestamp = float(record.get('timestamp', 0.0))
         faces = record.get('faces', []) or []
-        owner_face_id = int(record.get('owner_face_id', -1))
+        owner_face_id = record.get('owner_face_id')  # 保持原始类型（串称下整数）
         frame = record.get('frame', None)
+        face_matched = record.get('face_matched', False)
 
         if frame is None:
             # 没有原始帧时仍继续，但 pose_estimator 需要 frame 来构造相机参数
@@ -106,7 +107,7 @@ class IOInterface:
 
         if owner_face is None:
             # 如果没有找到主人脸，返回空结果（可按需修改）
-            output = _build_default_output(owner_face_id)
+            output = _build_default_output(owner_face_id, face_matched=face_matched)
             output['timestamp'] = timestamp
             output['features']['num_face_total'] = {'value': num_face_total, 'confidence': 1.0}
             send_to_scoring(output)
@@ -179,6 +180,7 @@ class IOInterface:
             face_distance_state,
             is_yawning,
             num_face_total,
+            face_matched=face_matched,
         )
 
         send_to_scoring(output)

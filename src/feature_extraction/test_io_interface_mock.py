@@ -36,7 +36,21 @@ io.pose_estimator.size = (480, 640)
 
 frame = np.zeros((480, 640, 3), dtype=np.uint8)
 face_roi = np.zeros((200, 200, 3), dtype=np.uint8)
-record = {'timestamp': 123.456, 'faces': [{'face_id': 1, 'face_roi': face_roi}], 'owner_face_id': 1, 'frame': frame}
+record = {
+    'timestamp': 1734567890.123,
+    'faces': [
+        {
+            'face_id': 'face_xxx',
+            'student_name': 'Alice',
+            'face_roi': face_roi,
+            'confidence': 0.91,
+            'face_matched': True
+        }
+    ],
+    'owner_face_id': 'face_xxx',
+    'frame': frame,
+    'face_matched': True
+}
 
 io.process(record, send_to_scoring)
 
