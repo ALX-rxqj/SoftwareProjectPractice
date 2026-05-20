@@ -13,18 +13,62 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 
 class MonitorMode(Enum):
     """
     监督模式枚举
-    
+
     CLASS: 网课模式 - 常规网课监控，评分策略相对宽松
     EXAM: 考试模式 - 考试场景监控，评分策略更严格
     """
     CLASS = "class"
     EXAM = "exam"
+
+
+# --- 告警类型常量 ---
+WARN_NO_FACE = "no_face"
+WARN_MULTI_FACE = "multi_face"
+WARN_LOW_EVIDENCE = "low_evidence"
+WARN_LOW_HEAD_POSE = "low_head_pose"
+WARN_LOW_BEHAVIOR = "low_behavior"
+WARN_LOW_EXPRESSION = "low_expression"
+
+# 告警优先级映射 — 数值越小优先级越高
+_ALERT_PRIORITY = {
+    WARN_NO_FACE: 1,
+    WARN_MULTI_FACE: 1,  # 人数异常同一优先级
+    WARN_LOW_EVIDENCE: 2,
+    WARN_LOW_HEAD_POSE: 3,
+    WARN_LOW_BEHAVIOR: 4,
+    WARN_LOW_EXPRESSION: 5,
+}
+
+# 降采样窗口占比阈值
+ANOMALY_RATIO_THRESHOLD = 0.5
+
+# 低分告警阈值
+LOW_SCORE_THRESHOLD = 50.0
+
+
+def alert_priority(warn_type: str) -> int:
+    """返回告警类型优先级（数值越小越高），未知类型返回999"""
+    return _ALERT_PRIORITY.get(warn_type, 999)
+
+
+def pick_highest_alert(candidates: Tuple[WarnInfo, ...]) -> Optional[WarnInfo]:
+    """从候选告警中按优先级选出最高的"""
+    if not candidates:
+        return None
+    best = candidates[0]
+    best_pri = alert_priority(best.warn_type)
+    for c in candidates[1:]:
+        pri = alert_priority(c.warn_type)
+        if pri < best_pri:
+            best = c
+            best_pri = pri
+    return best
 
 
 @dataclass(frozen=True)
@@ -33,7 +77,7 @@ class WarnInfo:
     告警信息数据结构
 
     Attributes:
-        warn_type: 告警类型（低分告警、离席、多人、姿态异常、行为异常、表情异常）
+        warn_type: 告警类型（no_face, multi_face, low_evidence, low_head_pose, low_behavior, low_expression）
         detail: 告警详情描述
     """
     warn_type: str
@@ -44,9 +88,9 @@ class WarnInfo:
 class FocusResultData:
     """
     SEI-01接口数据结构：专注度评分结果
-    
+
     调用时机：每完成一次帧级评分计算后输出
-    
+
     Attributes:
         timestamp: 当前帧时间戳
         session_id: 当前会话ID
@@ -58,7 +102,7 @@ class FocusResultData:
         final_focus_score: 最终专注度评分 [0, 100]
         is_force_zero: 是否因累计异常强制置0
         is_over_threshold: 人数异常累计次数是否超过阈值
-        warn_msg: 告警信息（可选）
+        warn_candidates: 本帧触发的所有告警候选（按优先级排列，空元组表示无告警）
     """
     timestamp: float
     session_id: str
@@ -70,10 +114,11 @@ class FocusResultData:
     final_focus_score: float
     is_force_zero: bool
     is_over_threshold: bool = False
-    warn_msg: Optional[WarnInfo] = None
+    warn_candidates: Tuple[WarnInfo, ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式，便于序列化传输"""
+        primary = pick_highest_alert(self.warn_candidates)
         return {
             "timestamp": self.timestamp,
             "session_id": self.session_id,
@@ -86,9 +131,9 @@ class FocusResultData:
             "is_force_zero": self.is_force_zero,
             "is_over_threshold": self.is_over_threshold,
             "warn_info": {
-                "type": self.warn_msg.warn_type,
-                "detail": self.warn_msg.detail,
-            } if self.warn_msg else None,
+                "type": primary.warn_type,
+                "detail": primary.detail,
+            } if primary else None,
         }
 
 
@@ -96,7 +141,7 @@ class FocusResultData:
 class SessionInfo:
     """
     会话信息数据结构
-    
+
     Attributes:
         session_id: 会话唯一标识
         mode: 监督模式（class/exam）
@@ -148,4 +193,3 @@ class FeatureData:
     face_distance_state: Dict[str, Any]
     is_yawning: Dict[str, Any]
     num_face_total: Dict[str, Any] = field(default_factory=lambda: {"value": 1, "confidence": 1.0})
-

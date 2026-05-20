@@ -7,9 +7,15 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from .contracts import FeatureData, MonitorMode, WarnInfo
+from .contracts import (
+    FeatureData, MonitorMode, WarnInfo,
+    WARN_NO_FACE, WARN_MULTI_FACE,
+    WARN_LOW_EVIDENCE, WARN_LOW_HEAD_POSE,
+    WARN_LOW_BEHAVIOR, WARN_LOW_EXPRESSION,
+    LOW_SCORE_THRESHOLD,
+)
 
 # ============================================================
 # 专注度评分宏参数（可按需调整）
@@ -139,7 +145,7 @@ class FocusEstimator:
 
     def estimate(
         self, feature_data: FeatureData, num_people: int = 1
-    ) -> Tuple[Dict[str, float], bool, bool, Optional[WarnInfo]]:
+    ) -> Tuple[Dict[str, float], bool, bool, Tuple[WarnInfo, ...]]:
         """
         计算一帧的专注度评分
 
@@ -151,15 +157,15 @@ class FocusEstimator:
             scores: 各维度评分字典
             is_force_zero: 当前帧是否强制置0（人数异常）
             is_over_threshold: 累计异常次数是否超过阈值
-            warn_info: 告警信息（可选）
+            warn_candidates: 本帧触发的所有告警候选
         """
         # 优先从 FeatureData 中提取人数
         num_face_data = feature_data.num_face_total
         num_face = num_face_data.get("value", num_people) if num_face_data else num_people
 
-        head_pose_score = self._score_head_pose(feature_data.head_pose)
-        behavior_score = self._score_behavior(feature_data)
-        expression_score = self._score_expression(feature_data.attention_state)
+        head_pose_score, head_pose_warn = self._score_head_pose(feature_data.head_pose)
+        behavior_score, behavior_warn = self._score_behavior(feature_data)
+        expression_score, expression_warn = self._score_expression(feature_data.attention_state)
         people_score, people_warn = self._score_people(num_face)
 
         # 证据理论融合（三源：头姿/动作/表情）
@@ -167,8 +173,15 @@ class FocusEstimator:
             head_pose_score, behavior_score, expression_score
         )
 
+        # 专注度评分过低告警
+        evidence_warn = None
+        if evidence_score < LOW_SCORE_THRESHOLD:
+            evidence_warn = WarnInfo(
+                warn_type=WARN_LOW_EVIDENCE,
+                detail=f"专注度评分过低: {evidence_score:.0f}",
+            )
+
         # 最终专注度 = 人数开关控制
-        # 人数评分为100则取融合分，否则强制置0
         if people_score == PEOPLE_SCORE_SINGLE:
             final_focus = evidence_score
             is_force_zero = False
@@ -181,10 +194,18 @@ class FocusEstimator:
         mode_key = self.mode.value
         is_over_threshold = self._abnormal_count >= FORCE_ZERO_THRESHOLD[mode_key]
 
-        # 组装 warn_info
-        warn_info = None
+        # 收集所有告警候选
+        warn_candidates: List[WarnInfo] = []
         if people_warn:
-            warn_info = people_warn
+            warn_candidates.append(people_warn)
+        if evidence_warn:
+            warn_candidates.append(evidence_warn)
+        if head_pose_warn:
+            warn_candidates.append(head_pose_warn)
+        if behavior_warn:
+            warn_candidates.append(behavior_warn)
+        if expression_warn:
+            warn_candidates.append(expression_warn)
 
         scores = {
             "head_pose": head_pose_score,
@@ -194,7 +215,7 @@ class FocusEstimator:
             "people": people_score,
             "final_focus": final_focus,
         }
-        return scores, is_force_zero, is_over_threshold, warn_info
+        return scores, is_force_zero, is_over_threshold, tuple(warn_candidates)
 
     def reset(self):
         """重置评估器状态"""
@@ -250,19 +271,18 @@ class FocusEstimator:
     # 头部姿态评分
     # ================================================================
 
-    def _score_head_pose(self, head_pose: Dict) -> float:
+    def _score_head_pose(self, head_pose: Dict) -> Tuple[float, Optional[WarnInfo]]:
         """
         头部姿态评分
 
         三个维度分别计算角度评分，用同一个置信度修正，
-        最后加权求和。
+        最后加权求和。分数 < 50 时附加告警。
         """
         pitch = head_pose.get("pitch", 0.0)
         yaw = head_pose.get("yaw", 0.0)
         roll = head_pose.get("roll", 0.0)
         confidence = head_pose.get("confidence", 1.0)
 
-        # 各维度基础评分配置信度修正
         pitch_score = self._score_head_angle(
             pitch, HEAD_POSE_NORMAL_PITCH_MIN, HEAD_POSE_NORMAL_PITCH_MAX
         )
@@ -278,12 +298,19 @@ class FocusEstimator:
         )
         roll_score = self._apply_conf_head_pose(roll_score, confidence)
 
-        # 加权求和
-        return (
+        score = (
             HEAD_POSE_WEIGHT_PITCH * pitch_score
             + HEAD_POSE_WEIGHT_YAW * yaw_score
             + HEAD_POSE_WEIGHT_ROLL * roll_score
         )
+
+        warn = None
+        if score < LOW_SCORE_THRESHOLD:
+            warn = WarnInfo(
+                warn_type=WARN_LOW_HEAD_POSE,
+                detail=f"头部姿态评分过低: {score:.0f}",
+            )
+        return score, warn
 
     def _score_head_angle(self, angle: float, normal_min: float, normal_max: float) -> float:
         """
@@ -299,14 +326,11 @@ class FocusEstimator:
         if angle > normal_max:
             if angle >= HEAD_POSE_MAX_ANGLE:
                 return HEAD_POSE_SCORE_MIN
-            # 在 (normal_max, 90) 区间内线性：100 → 0
             ratio = (angle - normal_max) / (HEAD_POSE_MAX_ANGLE - normal_max)
             return HEAD_POSE_SCORE_MAX * (1.0 - ratio)
 
-        # angle < normal_min
         if angle <= -HEAD_POSE_MAX_ANGLE:
             return HEAD_POSE_SCORE_MIN
-        # 在 (-90, normal_min) 区间内线性：100 → 0
         ratio = (normal_min - angle) / (normal_min - (-HEAD_POSE_MAX_ANGLE))
         return HEAD_POSE_SCORE_MAX * (1.0 - ratio)
 
@@ -322,7 +346,6 @@ class FocusEstimator:
             return score
         if confidence < GLOBAL_CONF_MIN:
             return BEHAVIOR_SCORE_NEUTRAL
-        # 在 [0.5, 0.8] 区间线性插值：c=0.5 → 0, c=0.8 → score
         t = (confidence - HEAD_POSE_CONF_LOW) / (HEAD_POSE_CONF_HIGH - HEAD_POSE_CONF_LOW)
         return score * t
 
@@ -330,21 +353,19 @@ class FocusEstimator:
     # 行为动作评分
     # ================================================================
 
-    def _score_behavior(self, feature_data: FeatureData) -> float:
+    def _score_behavior(self, feature_data: FeatureData) -> Tuple[float, Optional[WarnInfo]]:
         """
         行为动作评分
 
         四个子维度各用各的置信度修正后加权求和。
         好状态: [50, 100], 坏状态: [0, 50]
+        分数 < 50 时附加告警。
         """
-
-        # 睁眼闭眼：value=0 睁眼(好)→100, value=1 闭眼(坏)→0
         eye_state = feature_data.eye_state
         eye_value = eye_state.get("value", 0) if eye_state else 0
         eye_raw = BEHAVIOR_SCORE_GOOD if eye_value == 0 else BEHAVIOR_SCORE_BAD
         eye_score = self._apply_conf_behavior(eye_raw, eye_state.get("confidence", 1.0) if eye_state else 1.0)
 
-        # 注视屏幕：true→100(好), false→0(坏)
         looking = feature_data.is_looking_screen
         looking_value = looking.get("value", True) if looking else True
         looking_raw = BEHAVIOR_SCORE_GOOD if looking_value else BEHAVIOR_SCORE_BAD
@@ -352,7 +373,6 @@ class FocusEstimator:
             looking_raw, looking.get("confidence", 1.0) if looking else 1.0
         )
 
-        # 打哈欠：false→100(好,不打), true→0(坏,打)
         yawning = feature_data.is_yawning
         yawning_value = yawning.get("value", False) if yawning else False
         yawning_raw = BEHAVIOR_SCORE_GOOD if not yawning_value else BEHAVIOR_SCORE_BAD
@@ -360,7 +380,6 @@ class FocusEstimator:
             yawning_raw, yawning.get("confidence", 1.0) if yawning else 1.0
         )
 
-        # 人脸距离：value=0 正常(好)→100, value=1/2 异常(坏)→0
         distance = feature_data.face_distance_state
         distance_value = distance.get("value", 0) if distance else 0
         distance_raw = BEHAVIOR_SCORE_GOOD if distance_value == 0 else BEHAVIOR_SCORE_BAD
@@ -368,12 +387,20 @@ class FocusEstimator:
             distance_raw, distance.get("confidence", 1.0) if distance else 1.0
         )
 
-        return (
+        score = (
             BEHAVIOR_WEIGHT_EYE * eye_score
             + BEHAVIOR_WEIGHT_LOOKING * looking_score
             + BEHAVIOR_WEIGHT_YAWNING * yawning_score
             + BEHAVIOR_WEIGHT_DISTANCE * distance_score
         )
+
+        warn = None
+        if score < LOW_SCORE_THRESHOLD:
+            warn = WarnInfo(
+                warn_type=WARN_LOW_BEHAVIOR,
+                detail=f"行为动作评分过低: {score:.0f}",
+            )
+        return score, warn
 
     def _apply_conf_behavior(self, score: float, confidence: float) -> float:
         """
@@ -387,7 +414,6 @@ class FocusEstimator:
             return score
         if confidence < GLOBAL_CONF_MIN:
             return BEHAVIOR_SCORE_NEUTRAL
-        # c=0.5 → 50, c=0.8 → score
         t = (confidence - BEHAVIOR_CONF_LOW) / (BEHAVIOR_CONF_HIGH - BEHAVIOR_CONF_LOW)
         return BEHAVIOR_SCORE_NEUTRAL + (score - BEHAVIOR_SCORE_NEUTRAL) * t
 
@@ -395,17 +421,17 @@ class FocusEstimator:
     # 表情评分
     # ================================================================
 
-    def _score_expression(self, attention_state: Dict) -> float:
+    def _score_expression(self, attention_state: Dict) -> Tuple[float, Optional[WarnInfo]]:
         """
         表情评分
 
         根据 attention_state.value 映射基准分，
         再用置信度向下一级插值。
+        分数 < 50 时附加告警。
         """
         state_value = attention_state.get("value", 0) if attention_state else 0
         confidence = attention_state.get("confidence", 1.0) if attention_state else 1.0
 
-        # 映射基准分
         score_map = {
             0: EXPRESSION_SCORE_FOCUSED,
             1: EXPRESSION_SCORE_DISTRACTED,
@@ -415,7 +441,15 @@ class FocusEstimator:
         base_score = score_map.get(state_value, EXPRESSION_SCORE_FOCUSED)
         next_score = _EXPRESSION_NEXT_LEVEL.get(state_value, EXPRESSION_SCORE_ABSENT)
 
-        return self._apply_conf_expression(base_score, next_score, confidence)
+        score = self._apply_conf_expression(base_score, next_score, confidence)
+
+        warn = None
+        if score < LOW_SCORE_THRESHOLD:
+            warn = WarnInfo(
+                warn_type=WARN_LOW_EXPRESSION,
+                detail=f"表情评分过低: {score:.0f}",
+            )
+        return score, warn
 
     def _apply_conf_expression(
         self, score: float, next_level: float, confidence: float
@@ -431,7 +465,6 @@ class FocusEstimator:
             return score
         if confidence < GLOBAL_CONF_MIN:
             return BEHAVIOR_SCORE_NEUTRAL
-        # c=0.5 → next_level, c=0.8 → score
         t = (confidence - EXPRESSION_CONF_LOW) / (EXPRESSION_CONF_HIGH - EXPRESSION_CONF_LOW)
         return next_level + (score - next_level) * t
 
@@ -450,7 +483,7 @@ class FocusEstimator:
             return PEOPLE_SCORE_SINGLE, None
 
         if num_face == 0:
-            warn = WarnInfo(warn_type="no_face", detail="画面中无人脸")
+            warn = WarnInfo(warn_type=WARN_NO_FACE, detail="画面中无人脸")
         else:
-            warn = WarnInfo(warn_type="multi_face", detail=f"画面中有{num_face}张人脸")
+            warn = WarnInfo(warn_type=WARN_MULTI_FACE, detail=f"画面中有{num_face}张人脸")
         return PEOPLE_SCORE_OTHER, warn
