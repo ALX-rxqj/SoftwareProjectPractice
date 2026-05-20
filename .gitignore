@@ -222,5 +222,5 @@ skills-lock.json
 # 模型
 weights/
 
-.ultralytics/
+Ultralytics/
 

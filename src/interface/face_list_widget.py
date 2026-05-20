@@ -30,7 +30,7 @@ class FaceListWidget(QFrame):
 
         header_layout = QHBoxLayout()
         title_label = QLabel("会话列表")
-        title_label.setFont(QFont(*get_font("lg", "bold", "display")))
+        title_label.setFont(QFont(*get_font("lg", "bold", "ui")))
         title_label.setStyleSheet(get_style("label_title"))
 
         self.face_id_label = QLabel("")

@@ -39,8 +39,8 @@ class TopNavBar(QFrame):
         # ---- 标题区域 ----
         title_layout = QVBoxLayout()
         title_layout.setSpacing(2)
-        title_label = QLabel('<span style="color:#7A5CFF;">网课</span>专注度分析系统')
-        title_label.setFont(QFont(*get_font("title", "extrabold", "display")))
+        title_label = QLabel(f'<span style="color:{COLORS["primary"]};">网课</span>专注度分析系统')
+        title_label.setFont(QFont(*get_font("title", "extrabold", "ui")))
         title_label.setStyleSheet(f"color: {COLORS['text']};")
         title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
@@ -138,19 +138,19 @@ class TopNavBar(QFrame):
 
     def set_recording(self, is_recording):
         if is_recording:
-            self.record_dot.setStyleSheet(get_style("dot_danger"))
-            self.record_label.setText("录制中")
-            self.record_label.setStyleSheet(
-                f"color: {COLORS['danger']}; background: transparent;"
-            )
-            self.record_frame.setStyleSheet(get_style("badge_danger"))
-        else:
             self.record_dot.setStyleSheet(get_style("dot_success"))
-            self.record_label.setText("未录制")
+            self.record_label.setText("录制中")
             self.record_label.setStyleSheet(
                 f"color: {COLORS['focus_high']}; background: transparent;"
             )
             self.record_frame.setStyleSheet(get_style("badge_success"))
+        else:
+            self.record_dot.setStyleSheet(get_style("dot_danger"))
+            self.record_label.setText("未录制")
+            self.record_label.setStyleSheet(
+                f"color: {COLORS['danger']}; background: transparent;"
+            )
+            self.record_frame.setStyleSheet(get_style("badge_danger"))
 
     def set_mode_buttons_enabled(self, enabled: bool):
         for i in range(self.mode_group.buttons().__len__()):

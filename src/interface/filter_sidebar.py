@@ -29,7 +29,7 @@ class FilterSidebar(QFrame):
         layout.setSpacing(get_spacing("group"))
 
         self.title_label = QLabel("筛选条件")
-        self.title_label.setFont(QFont(*get_font("xl", "bold", "display")))
+        self.title_label.setFont(QFont(*get_font("xl", "bold", "ui")))
         self.title_label.setStyleSheet(get_style("label_title"))
         layout.addWidget(self.title_label)
 
@@ -102,7 +102,7 @@ class FilterSidebar(QFrame):
         self.end_date_edit = QDateEdit()
         self.end_date_edit.setCalendarPopup(True)
         self.end_date_edit.setFont(QFont(*get_font("sm")))
-        self.end_date_edit.setDate(datetime(2026, 4, 30))
+        self.end_date_edit.setDate(datetime.now())
         # 先设置 QDateEdit 样式
         self.end_date_edit.setStyleSheet(get_style("date_edit"))
         self.end_date_edit.calendarWidget().setStyleSheet(get_style("calendar_popup"))

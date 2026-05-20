@@ -31,11 +31,15 @@ class PipelineConfig:
 
 
 class FaceDetector:
-    def __init__(self, min_face_size: int, yolo_model_path: str | Path = "weights/yolov8-face.pt"):
+    def __init__(self, min_face_size: int, yolo_model_path: str | Path = "weights/yolov8-face.pt",
+                 yolo_model: Any = None, mtcnn: Any = None):
         self.min_face_size = min_face_size
-        self._yolo = None
-        self._init_yolo(yolo_model_path)
-        self._mtcnn = MTCNN() if MTCNN is not None else None
+        if yolo_model is not None:
+            self._yolo = yolo_model
+        else:
+            self._yolo = None
+            self._init_yolo(yolo_model_path)
+        self._mtcnn = mtcnn if mtcnn is not None else (MTCNN() if MTCNN is not None else None)
         self._cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
     def detect(self, frame: np.ndarray, roi_size: Tuple[int, int]) -> List[DetectionResult]:

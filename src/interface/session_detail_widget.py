@@ -5,7 +5,6 @@ from PyQt5.QtWidgets import (
     QHeaderView, QPushButton, QWidget,
 )
 
-import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -48,7 +47,7 @@ class SessionDetailWidget(QFrame):
         self.back_btn.clicked.connect(self.back_pressed.emit)
 
         self.title_label = QLabel("会话详情")
-        self.title_label.setFont(QFont(*get_font("xl", "bold", "display")))
+        self.title_label.setFont(QFont(*get_font("xl", "bold", "ui")))
         self.title_label.setStyleSheet(get_style("label_title"))
 
         header_layout.addWidget(self.back_btn)
@@ -59,43 +58,18 @@ class SessionDetailWidget(QFrame):
         self.btn_alert_info.setFont(QFont(*get_font("sm", "bold", "ui")))
         self.btn_alert_info.setFixedSize(90, SIZES["button"]["height_lg"])
         self.btn_alert_info.setCursor(Qt.PointingHandCursor)
-        self.btn_alert_info.setStyleSheet(f"""
+        self.btn_alert_info.setStyleSheet(get_style("button_select") + f"""
             QPushButton {{
-                color: {COLORS['text_secondary']};
-                background-color: #3A3A60;
-                border: 1px solid {COLORS['border_light']};
-                border-radius: {SIZES['radius']['base']}px;
                 font-weight: {FONTS['weight']['bold']};
-            }}
-            QPushButton:hover {{
-                background-color: #46467A;
-                border-color: #5A5A90;
-            }}
-            QPushButton:pressed {{
-                background-color: #2E2E50;
             }}
         """)
         self.btn_alert_info.clicked.connect(self._on_alert_info_clicked)
 
-        self.btn_export_report = QPushButton("导出报告")
+        self.btn_export_report = QPushButton("导出")
         self.btn_export_report.setFont(QFont(*get_font("sm", "bold", "ui")))
         self.btn_export_report.setFixedSize(90, SIZES["button"]["height_lg"])
         self.btn_export_report.setCursor(Qt.PointingHandCursor)
-        self.btn_export_report.setStyleSheet(f"""
-            QPushButton {{
-                color: #FFFFFF;
-                background-color: #00C853;
-                border: none;
-                border-radius: {SIZES['radius']['base']}px;
-                font-weight: {FONTS['weight']['bold']};
-            }}
-            QPushButton:hover {{
-                background-color: #00E676;
-            }}
-            QPushButton:pressed {{
-                background-color: #00A844;
-            }}
-        """)
+        self.btn_export_report.setStyleSheet(get_style("completion_btn_temp"))
         self.btn_export_report.clicked.connect(self._on_export_report_clicked)
 
         header_layout.addWidget(self.btn_alert_info)
@@ -136,7 +110,7 @@ class SessionDetailWidget(QFrame):
 
         # ---- 图表标题 ----
         chart_title_label = QLabel("专注度评分趋势")
-        chart_title_label.setFont(QFont(*get_font("xl", "bold", "display")))
+        chart_title_label.setFont(QFont(*get_font("xl", "bold", "ui")))
         chart_title_label.setStyleSheet(get_style("label_title"))
         layout.addWidget(chart_title_label)
 
@@ -261,7 +235,7 @@ class SessionDetailWidget(QFrame):
             self.canvas.draw()
             return
 
-        x = np.arange(n)
+        x = [r.get("timestamp", 0) for r in sampled]
 
         line_configs = [
             ("final_focus", "最终专注度", cc[0], 2.5),
@@ -280,9 +254,9 @@ class SessionDetailWidget(QFrame):
                         linestyle="-" if key == "final_focus" else "--")
 
         ax.set_title("专注度评分变化趋势", fontsize=12, color=COLORS["text"])
-        ax.set_xlabel("采样点", fontsize=10, color=COLORS["text_hint"])
+        ax.set_xlabel("时间 (秒)", fontsize=10, color=COLORS["text_hint"])
         ax.set_ylabel("评分", fontsize=10, color=COLORS["text_hint"])
-        ax.set_ylim(0, 100)
+        ax.set_ylim(0, 120)
         ax.grid(True, color=COLORS["border"], linestyle="--", alpha=0.4)
         ax.tick_params(axis="both", colors=COLORS["text_hint"])
         for spine in ax.spines.values():

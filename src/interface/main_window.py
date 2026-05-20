@@ -1,17 +1,16 @@
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QStackedLayout, QSplitter, QMenu, QFileDialog, QMessageBox
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QStackedLayout, QSplitter, QMenu, QFileDialog, QMessageBox, QLabel
 
 from .config import WINDOW_WIDTH, WINDOW_HEIGHT, TOP_NAV_HEIGHT, LEFT_BAR_WIDTH, RIGHT_PANEL_WIDTH
-from .styles import get_style, get_spacing
+from .styles import get_style, get_spacing, SIZES, COLORS
 from .top_nav_bar import TopNavBar
 from .left_sidebar import LeftSideBar
-from .video_widget import VideoWidget
+from .video_widget import VideoWidget, ToastWidget
 from .right_panel import RightPanel
 from .filter_sidebar import FilterSidebar
 from .data_record_widget import DataRecordWidget
 from .session_detail_widget import SessionDetailWidget
-from .interface_manager import interface_manager
-from .unified_data_manager import unified_data_manager, CameraInfo
+from .unified_data_manager import unified_data_manager, CameraInfo, VideoFrameData, FocusResultData
 from .face_registration_dialog import FaceRegistrationDialog
 from .alert_info_dialog import AlertInfoDialog
 from .export_report_util import export_to_excel, export_to_pdf
@@ -27,39 +26,55 @@ class MainWindow(QMainWindow):
         self.current_mode = "class"
         self.current_face_id = None
         self.current_device_id = 0
+        self._init_poll_timer = None
         self.init_ui()
-        self._setup_interface_manager()
+        self.toast_widget = ToastWidget(anchor=self.video_widget)
         self.connect_signals()
-        self.init_data()
+        self._start_async_init()
 
-    def _setup_interface_manager(self):
-        """配置接口管理器，连接预处理模块和状态估计模块"""
+    def _start_async_init(self):
+        """快速显示窗口，后台异步加载预处理模型。"""
 
-        # 数据库必须在任何模块初始化之前就绪
+        # 数据库（同步，轻量）
         if not unified_data_manager.initialize_database():
             print("[MainWindow] 警告: 数据库初始化失败，历史数据功能不可用")
 
-        if unified_data_manager.initialize_real_backend():
+        # 统一初始化后端（Mock 适配器 / REAL 后端加载）
+        if not unified_data_manager.initialize_all_backends():
+            print("[MainWindow] 错误: 后端初始化失败")
+
+        unified_data_manager.register_camera_list_callback(self.on_camera_list_received)
+
+        # 注册数据分发回调：MainWindow 作为数据中转中心
+        unified_data_manager.register_video_frame_callback(self._on_video_frame_for_display)
+        unified_data_manager.register_focus_result_callback(self._on_focus_result_for_display)
+
+        # 状态栏显示加载进度
+        self._status_label = QLabel("正在初始化模型...")
+        self.statusBar().addPermanentWidget(self._status_label)
+
+        # 轮询后台预处理初始化完成状态
+        self._init_poll_timer = QTimer()
+        self._init_poll_timer.timeout.connect(self._poll_init_complete)
+        self._init_poll_timer.start(200)
+
+    def _poll_init_complete(self):
+        """轮询：检查后台预处理初始化是否完成。"""
+        if not unified_data_manager.init_done:
+            self._status_label.setText("正在初始化模型...")
+            return
+
+        # 初始化完成
+        self._init_poll_timer.stop()
+        self.statusBar().removeWidget(self._status_label)
+        self._status_label = None
+
+        if unified_data_manager.init_success:
             print("[MainWindow] 已连接真实预处理后端")
         else:
             print("[MainWindow] 使用模拟数据模式（预处理模块不可用）")
-            interface_manager.set_preprocessing_callback(
-                lambda cmd, params: print(
-                    f"[MainWindow] 预处理指令(MOCK): {cmd}, params: {params}"
-                ) or {"success": True, "msg": "mock"}
-            )
 
-        if unified_data_manager.initialize_state_estimation_backend():
-            print("[MainWindow] 已连接真实状态估计后端")
-        else:
-            print("[MainWindow] 使用模拟数据模式（状态估计模块不可用）")
-            interface_manager.set_state_estimation_callback(
-                lambda cmd, params: print(
-                    f"[MainWindow] 状态估计指令(MOCK): {cmd}, params: {params}"
-                ) or {"success": True, "msg": "mock"}
-            )
-
-        unified_data_manager.register_camera_list_callback(self.on_camera_list_received)
+        self.init_data()
 
     def init_ui(self):
         central_widget = QWidget()
@@ -89,8 +104,8 @@ class MainWindow(QMainWindow):
         self.right_panel.setMaximumWidth(RIGHT_PANEL_WIDTH * 2)
 
         self.filter_sidebar = FilterSidebar()
-        self.filter_sidebar.setMinimumWidth(280)
-        self.filter_sidebar.setMaximumWidth(400)
+        self.filter_sidebar.setMinimumWidth(SIZES["sidebar"]["width"])
+        self.filter_sidebar.setMaximumWidth(SIZES["sidebar"]["width"] + 80)
 
         self.data_record_widget = DataRecordWidget()
         self.data_record_widget.setMinimumWidth(RIGHT_PANEL_WIDTH)
@@ -167,6 +182,9 @@ class MainWindow(QMainWindow):
         self.top_nav_query.mode_changed.connect(self.on_mode_changed)
         self.right_panel.start_analysis.connect(self.on_start_analysis)
         self.right_panel.stop_analysis.connect(self.on_stop_analysis)
+        self.right_panel.toast_requested.connect(self.toast_widget.show_toast)
+        self.right_panel.toast_dismiss_requested.connect(self.toast_widget.dismiss)
+        self.right_panel.set_start_validator(self._validate_start_analysis)
         self.filter_sidebar.filter_applied.connect(self.on_filter_applied)
         self.filter_sidebar.chart_options_changed.connect(self.on_chart_options_changed)
         self.data_record_widget.session_selected.connect(self.on_session_clicked)
@@ -200,6 +218,14 @@ class MainWindow(QMainWindow):
         face_ids = unified_data_manager.generate_face_ids()
         self.filter_sidebar.refresh_face_list(face_ids)
 
+    def _on_video_frame_for_display(self, data: VideoFrameData):
+        """UIM 视频帧回调 → 分发给 VideoWidget"""
+        self.video_widget.render_frame(data)
+
+    def _on_focus_result_for_display(self, data: FocusResultData):
+        """UIM 专注度结果回调 → 分发给 RightPanel"""
+        self.right_panel.handle_focus_result(data)
+
     def on_camera_list_received(self, cameras):
         """摄像头列表回调"""
         print(f"[MainWindow] 收到摄像头列表: {len(cameras)} 个摄像头")
@@ -213,7 +239,7 @@ class MainWindow(QMainWindow):
             self.switch_to_query_mode()
         else:
             self.switch_to_monitoring_mode(mode)
-            result = interface_manager.switch_mode(mode)
+            result = unified_data_manager.switch_mode(mode)
             print(f"[MainWindow] 切换模式: {mode}, 结果: {result}")
 
     def switch_to_monitoring_mode(self, mode):
@@ -281,12 +307,15 @@ class MainWindow(QMainWindow):
         self.current_face_id = face_id
         print(f"[MainWindow] 当前选中人脸: {face_id}")
 
-    def on_start_analysis(self):
-        print("[MainWindow] 开始分析")
-
+    def _validate_start_analysis(self):
+        """开始分析前验证，被 RightPanel.on_control_click 调用。返回 (bool, str)。"""
         if not self.left_sidebar.has_faces():
             self._msg("warning", "提示", "请先完成人脸注册")
-            return
+            return False, ""
+        return True, ""
+
+    def on_start_analysis(self):
+        print("[MainWindow] 开始分析")
 
         face_id = self.left_sidebar.get_selected_face_id()
         if face_id:
@@ -294,17 +323,17 @@ class MainWindow(QMainWindow):
         monitored_faces = [face_id] if face_id else []
 
         print(f"[MainWindow] 监控人脸: {monitored_faces}")
-        result = interface_manager.toggle_capture(
+        result = unified_data_manager.toggle_capture(
             device_id=self.current_device_id, start=True,
             monitored_faces=monitored_faces,
         )
         print(f"[MainWindow] 摄像头控制结果: {result}")
 
-        session_result = interface_manager.toggle_analysis(start=True, face_id=face_id)
+        session_result = unified_data_manager.toggle_analysis(start=True, face_id=face_id)
         if session_result and "session_id" in session_result:
             print(f"[MainWindow] 创建会话成功: {session_result['session_id']}")
 
-        interface_manager.switch_mode(self.current_mode)
+        unified_data_manager.switch_mode(self.current_mode)
 
         self.video_widget.start_processing()
         self.top_nav.set_recording(True)
@@ -315,12 +344,13 @@ class MainWindow(QMainWindow):
 
     def on_stop_analysis(self):
         print("[MainWindow] 停止分析")
+        self.toast_widget.dismiss()
         self.video_widget.stop_processing()
 
-        result = interface_manager.toggle_capture(device_id=self.current_device_id, start=False)
+        result = unified_data_manager.toggle_capture(device_id=self.current_device_id, start=False)
         print(f"[MainWindow] 摄像头控制结果: {result}")
 
-        session_result = interface_manager.toggle_analysis(start=False)
+        session_result = unified_data_manager.toggle_analysis(start=False)
         if session_result and "session_id" in session_result:
             print(f"[MainWindow] 结束会话成功: {session_result['session_id']}")
 
@@ -329,6 +359,7 @@ class MainWindow(QMainWindow):
         self.top_nav.set_mode_buttons_enabled(True)
         self.top_nav_query.set_mode_buttons_enabled(True)
         self.left_sidebar.set_faces_enabled(True)
+        self.right_panel.reset_scores()
 
     def on_camera_selected(self, device_id: int):
         """用户选择摄像头"""
@@ -348,7 +379,7 @@ class MainWindow(QMainWindow):
 
     def on_register_face_clicked(self):
         """注册人脸按钮点击"""
-        if interface_manager.is_capture_running:
+        if unified_data_manager.is_capture_running:
             self._msg("warning", "提示",
                       '正在分析中，请先点击"停止分析"后再注册人脸。')
             return
@@ -372,7 +403,7 @@ class MainWindow(QMainWindow):
             f"frames={len(frames)}, storage={storage_type}"
         )
 
-        result = interface_manager.register_face(name, frames, storage_type)
+        result = unified_data_manager.register_face(name, frames, storage_type)
         print(f"[MainWindow] register_face 结果: {result}")
 
     def on_delete_face(self, face_id: str):
@@ -393,26 +424,26 @@ class MainWindow(QMainWindow):
         confirm_box.setIcon(QMessageBox.Question)
         confirm_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         confirm_box.setDefaultButton(QMessageBox.No)
-        confirm_box.setStyleSheet("""
-            QMessageBox {
-                background-color: #FFFFFF;
-                color: #000000;
-            }
-            QLabel {
-                color: #000000;
-                background-color: #FFFFFF;
-            }
-            QPushButton {
-                color: #000000;
-                background-color: #E0E0E0;
-                border: 1px solid #AAAAAA;
-                border-radius: 4px;
+        confirm_box.setStyleSheet(f"""
+            QMessageBox {{
+                background-color: {COLORS['surface']};
+                color: {COLORS['text']};
+            }}
+            QLabel {{
+                color: {COLORS['text']};
+                background-color: {COLORS['surface']};
+            }}
+            QPushButton {{
+                color: {COLORS['text']};
+                background-color: {COLORS['card']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
                 padding: 6px 16px;
                 min-width: 80px;
-            }
-            QPushButton:hover {
-                background-color: #D0D0D0;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['card_hover']};
+            }}
         """)
         if confirm_box.exec_() != QMessageBox.Yes:
             return
@@ -451,21 +482,21 @@ class MainWindow(QMainWindow):
         alerts = unified_data_manager.generate_alarm_events(session_id)
 
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #262650;
-                color: #FFFFFF;
-                border: 1px solid #3A3A60;
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {COLORS['card']};
+                color: {COLORS['text']};
+                border: 1px solid {COLORS['border_light']};
                 border-radius: 8px;
                 padding: 4px;
-            }
-            QMenu::item {
+            }}
+            QMenu::item {{
                 padding: 8px 32px;
                 border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background-color: #7A5CFF;
-            }
+            }}
+            QMenu::item:selected {{
+                background-color: {COLORS['primary']};
+            }}
         """)
 
         excel_action = menu.addAction("导出 Excel (.xlsx)")
@@ -539,25 +570,25 @@ class MainWindow(QMainWindow):
         box = QMessageBox()
         box.setWindowTitle(title)
         box.setText(text)
-        box.setStyleSheet("""
-            QMessageBox {
-                background-color: #FFFFFF;
-                color: #000000;
-            }
-            QLabel {
-                color: #000000;
-            }
-            QPushButton {
-                color: #000000;
-                background-color: #E0E0E0;
-                border: 1px solid #AAAAAA;
-                border-radius: 4px;
+        box.setStyleSheet(f"""
+            QMessageBox {{
+                background-color: {COLORS['surface']};
+                color: {COLORS['text']};
+            }}
+            QLabel {{
+                color: {COLORS['text']};
+            }}
+            QPushButton {{
+                color: {COLORS['text']};
+                background-color: {COLORS['card']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
                 padding: 6px 16px;
                 min-width: 80px;
-            }
-            QPushButton:hover {
-                background-color: #D0D0D0;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['card_hover']};
+            }}
         """)
         if level == "info":
             box.setIcon(QMessageBox.Information)
@@ -569,31 +600,31 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _question(title: str, text: str) -> bool:
-        """显示不受深色主题影响的确认框，返回 True 表示用户点击 Yes"""
+        """显示确认框，返回 True 表示用户点击 Yes"""
         box = QMessageBox()
         box.setWindowTitle(title)
         box.setText(text)
         box.setIcon(QMessageBox.Question)
         box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         box.setDefaultButton(QMessageBox.No)
-        box.setStyleSheet("""
-            QMessageBox {
-                background-color: #FFFFFF;
-                color: #000000;
-            }
-            QLabel {
-                color: #000000;
-            }
-            QPushButton {
-                color: #000000;
-                background-color: #E0E0E0;
-                border: 1px solid #AAAAAA;
-                border-radius: 4px;
+        box.setStyleSheet(f"""
+            QMessageBox {{
+                background-color: {COLORS['surface']};
+                color: {COLORS['text']};
+            }}
+            QLabel {{
+                color: {COLORS['text']};
+            }}
+            QPushButton {{
+                color: {COLORS['text']};
+                background-color: {COLORS['card']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
                 padding: 6px 16px;
                 min-width: 80px;
-            }
-            QPushButton:hover {
-                background-color: #D0D0D0;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['card_hover']};
+            }}
         """)
         return box.exec_() == QMessageBox.Yes

@@ -13,12 +13,12 @@ SIZES = {
     },
 
     "radius": {
-        "sm": 4,
+        "sm": 6,
         "base": 8,
         "lg": 12,
         "xl": 16,
-        "xxl": 20,
-        "xxxl": 24,
+        "xxl": 16,
+        "xxxl": 16,
     },
 
     "border": {
@@ -37,7 +37,7 @@ SIZES = {
     },
 
     "toolbar": {
-        "height": 120,
+        "height": 140,
     },
 
     "button": {

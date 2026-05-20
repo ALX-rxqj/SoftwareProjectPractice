@@ -12,9 +12,12 @@
 """
 
 import time as _time
+import threading
 from typing import Callable, Optional, Dict, Any, List
 from enum import Enum
 from dataclasses import dataclass
+
+from PyQt5.QtCore import QTimer
 
 from .interface_manager import interface_manager
 from .mock_data_manager import mock_data_manager
@@ -70,7 +73,7 @@ class UnifiedDataManager:
 
         # 各模块独立数据源控制
         self._preprocessing_source: DataSource = DataSource.REAL
-        self._state_estimation_source: DataSource = DataSource.MOCK
+        self._state_estimation_source: DataSource = DataSource.REAL
         self._database_source: DataSource = DataSource.REAL
 
         self._video_frame_callback: Optional[Callable[[VideoFrameData], None]] = None
@@ -79,9 +82,15 @@ class UnifiedDataManager:
 
         self._current_session_id: Optional[str] = None
         self._warn_threshold: float = 60.0
+        self._mock_capture_running: bool = False
 
         self._preprocessing_service = None
         self._state_estimation_service = None
+
+        self._mock_video_timer: Optional[QTimer] = None
+        self._mock_focus_timer: Optional[QTimer] = None
+
+        self._init_result: Dict[str, Any] = {"done": True, "success": True}
 
         self._setup_interface_manager_integration()
 
@@ -132,6 +141,13 @@ class UnifiedDataManager:
     def database_source(self, source: DataSource):
         self._database_source = source
         print(f"[UnifiedDataManager] 数据库模块数据源切换为: {source.value}")
+
+    @property
+    def is_capture_running(self) -> bool:
+        """采集是否正在运行（MOCK/REAL 统一）"""
+        if self._preprocessing_source == DataSource.REAL:
+            return interface_manager.is_capture_running
+        return self._mock_capture_running
 
     # ──────────────────── 向后兼容：全局 data_source 属性 ────────────────────
 
@@ -217,19 +233,35 @@ class UnifiedDataManager:
     def register_camera_list_callback(self, callback: Callable[[List[CameraInfo]], None]):
         self._camera_list_callback = callback
 
+    def register_face_registration_frame_callback(self, callback):
+        """注册人脸注册专用帧回调（转发到 interface_manager）"""
+        interface_manager.register_face_registration_frame_callback(callback)
+
+    def register_face_registration_result_callback(self, callback):
+        """注册人脸注册异步结果回调（转发到 interface_manager）"""
+        interface_manager.register_face_registration_result_callback(callback)
+
+    def clear_face_registration_frame_callback(self):
+        """清除人脸注册帧回调"""
+        interface_manager.clear_face_registration_frame_callback()
+
+    def clear_face_registration_result_callback(self):
+        """清除人脸注册结果回调"""
+        interface_manager.clear_face_registration_result_callback()
+
+    def register_face(self, name: str, frames: list, storage_type: str) -> Dict[str, Any]:
+        """注册人脸。MOCK 模式下不支持。"""
+        if self._preprocessing_source == DataSource.MOCK:
+            return {"success": False, "msg": "模拟模式下不支持人脸注册"}
+        return interface_manager.register_face(name, frames, storage_type)
+
     # ──────────────────── 实时数据（委托 mock_data_manager） ────────────────────
 
-    def generate_realtime_scores(self) -> Dict[str, Any]:
-        """获取实时评分数据（供UI直接调用）"""
+    def _generate_realtime_scores(self) -> Dict[str, Any]:
+        """获取实时评分数据（内部方法，Mock timer 使用）"""
         if self._state_estimation_source == DataSource.REAL:
             return {}
         return mock_data_manager.generate_realtime_scores()
-
-    def generate_focus_result_dict(self) -> Dict[str, Any]:
-        """获取完整的专注度结果字典"""
-        if self._state_estimation_source == DataSource.REAL:
-            return {}
-        return mock_data_manager.generate_focus_result()
 
     def push_video_frame(self, frame: Any = None, faces: list = None, timestamp: float = None):
         """推送视频帧数据"""
@@ -357,15 +389,7 @@ class UnifiedDataManager:
         return all_sessions
 
     def query_sessions(self, filter_params: dict) -> List[Dict[str, Any]]:
-        """UII-01: 按筛选条件查询会话列表
-
-        Args:
-            filter_params: start_date, end_date, mode, focus_min, focus_max,
-                           abnormal_min, abnormal_max
-
-        Returns:
-            筛选后的会话列表
-        """
+        """UII-01: 按筛选条件查询会话列表"""
         if self._database_source == DataSource.REAL:
             db_params = dict(filter_params)
             if db_params.get("start_date"):
@@ -420,12 +444,6 @@ class UnifiedDataManager:
 
     @staticmethod
     def _date_str_to_ts(date_str: str, day_start: bool) -> float:
-        """将 "YYYY-MM-DD" 字符串转为 Unix 时间戳
-
-        Args:
-            date_str: 日期字符串 "YYYY-MM-DD"
-            day_start: True → 当天 00:00:00, False → 当天 23:59:59
-        """
         import datetime
         dt = datetime.datetime.strptime(date_str, "%Y-%m-%d")
         if not day_start:
@@ -484,25 +502,64 @@ class UnifiedDataManager:
         if self._preprocessing_source == DataSource.REAL:
             return interface_manager.toggle_capture(device_id, start, monitored_faces)
 
+        # MOCK 路径
+        self._mock_capture_running = start
+        if start:
+            self._start_mock_video_timer()
+        else:
+            self._stop_mock_video_timer()
         return {"success": True, "msg": f"{action}视频采集指令已发送"}
 
-    def toggle_analysis(self, start: bool) -> Optional[Dict[str, Any]]:
+    def _start_mock_video_timer(self):
+        if self._mock_video_timer is not None:
+            return
+        self._mock_video_timer = QTimer()
+        self._mock_video_timer.timeout.connect(lambda: self.push_video_frame())
+        self._mock_video_timer.start(33)
+        print("[UnifiedDataManager] Mock 视频帧定时器已启动")
+
+    def _stop_mock_video_timer(self):
+        if self._mock_video_timer is None:
+            return
+        self._mock_video_timer.stop()
+        self._mock_video_timer = None
+        print("[UnifiedDataManager] Mock 视频帧定时器已停止")
+
+    def toggle_analysis(self, start: bool, face_id: str = None) -> Optional[Dict[str, Any]]:
         action = "启动" if start else "停止"
         print(f"[UnifiedDataManager] {action}专注度分析")
 
         if self._state_estimation_source == DataSource.REAL:
-            return interface_manager.toggle_analysis(start)
+            return interface_manager.toggle_analysis(start, face_id=face_id)
 
+        # MOCK 路径
         if start:
             import uuid
             self._current_session_id = f"session_{uuid.uuid4().hex[:8]}"
             print(f"[UnifiedDataManager] 创建新会话: {self._current_session_id}")
+            self._start_mock_focus_timer()
             return {"session_id": self._current_session_id}
         else:
+            self._stop_mock_focus_timer()
             if self._current_session_id:
                 print(f"[UnifiedDataManager] 结束会话: {self._current_session_id}")
                 self._current_session_id = None
             return {"success": True}
+
+    def _start_mock_focus_timer(self):
+        if self._mock_focus_timer is not None:
+            return
+        self._mock_focus_timer = QTimer()
+        self._mock_focus_timer.timeout.connect(lambda: self.push_focus_result())
+        self._mock_focus_timer.start(1000)
+        print("[UnifiedDataManager] Mock 专注度评分定时器已启动")
+
+    def _stop_mock_focus_timer(self):
+        if self._mock_focus_timer is None:
+            return
+        self._mock_focus_timer.stop()
+        self._mock_focus_timer = None
+        print("[UnifiedDataManager] Mock 专注度评分定时器已停止")
 
     def switch_mode(self, mode: str) -> Dict[str, Any]:
         if mode not in ["class", "exam"]:
@@ -534,15 +591,80 @@ class UnifiedDataManager:
             return interface_manager.refresh_camera_list()
         return self.request_camera_list()
 
-    # ──────────────────── 真实后端初始化 ────────────────────
+    # ──────────────────── 统一初始化入口 ────────────────────
 
-    def initialize_real_backend(self) -> bool:
-        """
-        初始化真实预处理后端，将 PreprocessingService 接入 interface_manager。
+    def initialize_all_backends(
+        self,
+        progress_callback: Optional[Callable[[str, float], None]] = None,
+    ) -> bool:
+        """统一初始化入口。根据各模块的 data_source 决定初始化策略。
 
-        Returns:
-            True 表示初始化成功
+        - preprocessing_source == REAL → 后台线程加载 PreprocessingService
+        - preprocessing_source == MOCK → 安装 Mock 适配器
+        - state_estimation_source == REAL → 同步加载 StateEstimationService（失败返回 False）
+        - state_estimation_source == MOCK → 安装 Mock 适配器
+
+        REAL 路径失败直接返回 False，不静默降级。
         """
+        # 预处理模块
+        if self._preprocessing_source == DataSource.MOCK:
+            self._install_mock_preprocessing_adapter()
+        else:
+            # REAL：启动后台线程加载模型
+            self._init_result = {"done": False, "success": False}
+            thread = threading.Thread(
+                target=self._init_preprocessing_thread,
+                args=(progress_callback,),
+                daemon=True,
+            )
+            thread.start()
+
+        # 状态估计模块（同步，轻量）
+        if self._state_estimation_source == DataSource.REAL:
+            if not self._init_state_estimation_backend():
+                return False
+        else:
+            self._install_mock_state_estimation_adapter()
+
+        return True
+
+    def _install_mock_preprocessing_adapter(self):
+        """安装 Mock 预处理适配器到 interface_manager"""
+        interface_manager.set_preprocessing_callback(
+            lambda cmd, params: print(
+                f"[UnifiedDataManager] 预处理指令(MOCK): {cmd}, params: {params}"
+            ) or {"success": True, "msg": "mock"}
+        )
+        print("[UnifiedDataManager] Mock 预处理适配器已安装")
+
+    def _install_mock_state_estimation_adapter(self):
+        """安装 Mock 状态估计适配器到 interface_manager"""
+        interface_manager.set_state_estimation_callback(
+            lambda cmd, params: print(
+                f"[UnifiedDataManager] 状态估计指令(MOCK): {cmd}, params: {params}"
+            ) or {"success": True, "msg": "mock"}
+        )
+        print("[UnifiedDataManager] Mock 状态估计适配器已安装")
+
+    def _init_preprocessing_thread(self, progress_callback):
+        """后台线程：加载真实预处理后端"""
+        try:
+            success = self._init_real_preprocessing_backend(progress_callback)
+            self._init_result["done"] = True
+            self._init_result["success"] = success
+            if not success:
+                print("[UnifiedDataManager] 预处理模块初始化失败（后台线程）")
+        except Exception as e:
+            self._init_result["done"] = True
+            self._init_result["success"] = False
+            self._init_result["message"] = str(e)
+            print(f"[UnifiedDataManager] 预处理模块初始化异常: {e}")
+
+    def _init_real_preprocessing_backend(
+        self,
+        progress_callback: Optional[Callable[[str, float], None]] = None,
+    ) -> bool:
+        """加载 PreprocessingService 并注入到 interface_manager"""
         try:
             from ..preprocessing.service import (
                 PreprocessingService,
@@ -553,9 +675,9 @@ class UnifiedDataManager:
                 ui_callback=self._on_preprocessing_ui_packet,
                 camera_list_callback=self._on_preprocessing_camera_list,
                 log_callback=lambda msg: print(f"[Preprocessing] {msg}"),
+                progress_callback=progress_callback,
             )
 
-            # 注入数据库人脸写回调（回调解耦：预处理模块不直接 import 数据库模块）
             if hasattr(service, "set_face_embedding_writer"):
                 service.set_face_embedding_writer(
                     lambda face_id, student_name, embeddings:
@@ -564,8 +686,6 @@ class UnifiedDataManager:
                         )
                 )
                 print("[UnifiedDataManager] 数据库人脸写回调已注入预处理模块")
-            else:
-                print("[UnifiedDataManager] 注意: PreprocessingService 未实现 set_face_embedding_writer")
 
             adapter = PreprocessingCommandAdapter(service)
             interface_manager.set_preprocessing_callback(adapter)
@@ -580,27 +700,29 @@ class UnifiedDataManager:
             print(f"[UnifiedDataManager] 预处理模块初始化失败: {e}")
             return False
 
-    def _on_preprocessing_ui_packet(self, packet: dict):
-        """预处理模块 UI 数据包路由
+    @property
+    def init_done(self) -> bool:
+        """后台初始化是否完成"""
+        return self._init_result.get("done", True)
 
-        通过 type 字段区分：face_registration_result → 异步人脸注册结果，
-        否则 → 视频帧数据（向后兼容）。
-        """
+    @property
+    def init_success(self) -> bool:
+        """后台初始化是否成功"""
+        return self._init_result.get("success", True)
+
+    def _on_preprocessing_ui_packet(self, packet: dict):
         ptype = packet.get("type", "")
         if ptype == "face_registration_result":
             interface_manager.on_face_registration_result(packet)
         else:
-            # 向后兼容：无 type 字段时按视频帧处理
             interface_manager.on_video_frame_received(
                 packet.get("frame"), packet.get("faces", []), packet.get("timestamp", 0.0)
             )
 
     def _on_preprocessing_video_frame(self, frame, faces, timestamp):
-        """预处理模块视频帧回调 -> 转发至 InterfaceManager（保留兼容）"""
         interface_manager.on_video_frame_received(frame, faces, timestamp)
 
     def _on_preprocessing_camera_list(self, camera_list):
-        """预处理模块摄像头列表回调 -> 转发至 InterfaceManager"""
         interface_manager.on_camera_list_received(camera_list)
 
     @property
@@ -611,26 +733,20 @@ class UnifiedDataManager:
     def state_estimation_service(self):
         return self._state_estimation_service
 
-    def initialize_state_estimation_backend(self) -> bool:
-        """初始化真实状态估计后端，将 StateEstimationService 接入 interface_manager。
-
-        同时注入数据库写回调，实现回调解耦。
-        """
+    def _init_state_estimation_backend(self) -> bool:
+        """初始化真实状态估计后端（内部方法，由 initialize_all_backends 调用）"""
         try:
             from ..state_estimation.service import StateEstimationService
 
             service = StateEstimationService()
             service.set_log_callback(lambda msg: print(msg))
 
-            # 桥接：contracts.FocusResultData → dict → interface_manager（SEI-01）
             service.set_focus_result_callback(
                 lambda result: interface_manager.on_focus_result_received(
                     result.to_dict()
                 )
             )
 
-            # 注入数据库写回调（回调解耦：状态估计模块不直接 import 数据库模块）
-            # 注意：StateEstimationService.set_record_writer() 待状态估计模块实现
             if hasattr(service, "set_record_writer"):
                 service.set_record_writer(
                     lambda records: database_service.insert_focus_records_batch(records)
@@ -655,15 +771,20 @@ class UnifiedDataManager:
             print(f"[UnifiedDataManager] 状态估计模块初始化失败: {e}")
             return False
 
+    # ── 保留旧方法作为兼容（内部转发到统一入口） ──
+
+    def initialize_real_backend(
+        self,
+        progress_callback: Optional[Callable[[str, float], None]] = None,
+    ) -> bool:
+        """已废弃：请使用 initialize_all_backends。保留用于向后兼容。"""
+        return self._init_real_preprocessing_backend(progress_callback)
+
+    def initialize_state_estimation_backend(self) -> bool:
+        """已废弃：请使用 initialize_all_backends。保留用于向后兼容。"""
+        return self._init_state_estimation_backend()
+
     def delete_sessions(self, session_ids: List[str]) -> Dict[str, Any]:
-        """删除会话及关联数据
-
-        Args:
-            session_ids: 要删除的会话 ID 列表
-
-        Returns:
-            {"deleted_count": N, "total": M}
-        """
         print(f"[UnifiedDataManager] 删除会话请求: {len(session_ids)} 条")
         if self._database_source == DataSource.REAL:
             result = database_service.delete_sessions(session_ids)
@@ -678,10 +799,7 @@ class UnifiedDataManager:
 
 
 class StateEstimationCommandAdapter:
-    """将 StateEstimationService 适配为 InterfaceManager 所需的回调格式
-
-    镜像 PreprocessingCommandAdapter 的设计模式。
-    """
+    """将 StateEstimationService 适配为 InterfaceManager 所需的回调格式"""
 
     def __init__(self, service):
         self.service = service

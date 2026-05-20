@@ -1,6 +1,6 @@
 FONTS = {
     # ── 字体族角色 ──
-    "family_display": '"STHupo", "华文琥珀", "Segoe UI", "Microsoft YaHei", sans-serif',
+    "family_display": '"Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif',
     "family_ui": '"Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif',
     "family_data": 'Consolas, "Cascadia Code", "Courier New", monospace',
 
@@ -10,7 +10,7 @@ FONTS = {
     "size": {
         "xs": 10,
         "sm": 11,
-        "base": 12,
+        "base": 13,
         "md": 13,
         "lg": 14,
         "xl": 16,

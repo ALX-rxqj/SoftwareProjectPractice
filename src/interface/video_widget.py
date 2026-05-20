@@ -1,15 +1,231 @@
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QPixmap, QImage, QFont, QPainter, QPen, QColor
-from PyQt5.QtWidgets import QFrame, QVBoxLayout, QLabel, QHBoxLayout
+from enum import Enum
 
-from .interface_manager import interface_manager, VideoFrameData
+from PyQt5.QtCore import (
+    Qt, QTimer, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint,
+)
+from PyQt5.QtGui import QPixmap, QImage, QFont, QPainter, QPen, QColor
+from PyQt5.QtWidgets import (
+    QFrame, QVBoxLayout, QLabel, QHBoxLayout, QGraphicsOpacityEffect,
+)
+
 from .styles import COLORS, FONTS, SIZES, get_style, get_font, get_spacing
 from .styles.effects import create_card_shadow
 
 
+class ToastState(Enum):
+    IDLE = 0
+    FADING_IN = 1
+    VISIBLE = 2
+    FADING_OUT = 3
+
+
+class ToastWidget(QFrame):
+    """悬浮告警提示，淡入淡出。Qt.Tool 窗口跟随父窗口生命周期，失焦自动隐藏。"""
+
+    def __init__(self, anchor=None):
+        super().__init__(None)
+        self.setWindowFlags(
+            Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self._anchor = anchor
+        self._state = ToastState.IDLE
+        self._current_content = None
+        self._pending_content = None
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(0.0)
+        self.setGraphicsEffect(self._opacity_effect)
+        self._fade_in = None
+        self._fade_out = None
+        self._dismiss_timer = None
+        self._init_ui()
+        self.hide()
+
+    def _init_ui(self):
+        self.setFixedHeight(48)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._indicator = QFrame()
+        self._indicator.setFixedWidth(4)
+        layout.addWidget(self._indicator)
+
+        text_container = QFrame()
+        text_container.setStyleSheet(
+            f"background-color: rgba(22, 27, 34, 0.92);"
+        )
+        text_layout = QHBoxLayout(text_container)
+        text_layout.setContentsMargins(14, 0, 20, 0)
+        text_layout.setSpacing(6)
+
+        self._type_label = QLabel()
+        self._type_label.setFont(QFont(*get_font("base", "bold", "ui")))
+        self._detail_label = QLabel()
+        self._detail_label.setFont(QFont(*get_font("base", "normal", "ui")))
+        self._detail_label.setStyleSheet(
+            f"color: {COLORS['text']}; background: transparent;"
+        )
+        text_layout.addWidget(self._type_label)
+        text_layout.addWidget(self._detail_label)
+        text_layout.addStretch()
+        layout.addWidget(text_container)
+
+    def show_toast(self, alert_type: str, detail: str):
+        new_content = (alert_type, detail)
+
+        if self._state == ToastState.IDLE:
+            self._current_content = new_content
+            self._update_content(alert_type, detail)
+            self._transition_to(ToastState.FADING_IN)
+            self._start_fade_in()
+
+        elif self._state == ToastState.FADING_IN:
+            if new_content == self._current_content:
+                return
+            self._cancel_animations()
+            self._current_content = new_content
+            self._update_content(alert_type, detail)
+            self._transition_to(ToastState.FADING_IN)
+            self._start_fade_in()
+
+        elif self._state == ToastState.VISIBLE:
+            if new_content == self._current_content:
+                return
+            self._pending_content = new_content
+            self._transition_to(ToastState.FADING_OUT)
+            self._start_fade_out()
+
+        else:  # FADING_OUT
+            if new_content == self._pending_content:
+                return
+            self._cancel_animations()
+            self._current_content = new_content
+            self._pending_content = None
+            self._update_content(alert_type, detail)
+            self._transition_to(ToastState.FADING_IN)
+            self._start_fade_in()
+
+    def dismiss(self):
+        self._cancel_animations()
+        self._opacity_effect.setOpacity(0.0)
+        self.hide()
+        self._state = ToastState.IDLE
+        self._current_content = None
+        self._pending_content = None
+        self._remove_anchor_filter()
+
+    def _transition_to(self, state: ToastState):
+        self._state = state
+
+    def _update_content(self, alert_type: str, detail: str):
+        if alert_type in ("no_face", "multi_face"):
+            self._indicator_color = COLORS["danger"]
+        else:
+            self._indicator_color = COLORS["warning"]
+        self._indicator.setStyleSheet(
+            f"background-color: {self._indicator_color};"
+        )
+        self._type_label.setText(f"[{alert_type}]")
+        self._type_label.setStyleSheet(
+            f"color: {self._indicator_color}; background: transparent;"
+        )
+        self._detail_label.setText(detail)
+
+    def _start_fade_in(self):
+        if self._anchor is not None:
+            self._anchor.installEventFilter(self)
+        self._position_over_anchor()
+        self.show()
+        self.raise_()
+        self._fade_in = QPropertyAnimation(self._opacity_effect, b"opacity")
+        self._fade_in.setDuration(200)
+        self._fade_in.setStartValue(self._opacity_effect.opacity())
+        self._fade_in.setEndValue(1.0)
+        self._fade_in.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade_in.finished.connect(self._on_fade_in_done)
+        self._fade_in.start()
+
+    def _on_fade_in_done(self):
+        self._fade_in = None
+        self._transition_to(ToastState.VISIBLE)
+        self._dismiss_timer = QTimer(self)
+        self._dismiss_timer.setSingleShot(True)
+        self._dismiss_timer.timeout.connect(self._start_fade_out)
+        self._dismiss_timer.start(3000)
+
+    def _start_fade_out(self):
+        self._dismiss_timer = None
+        self._transition_to(ToastState.FADING_OUT)
+        self._fade_out = QPropertyAnimation(self._opacity_effect, b"opacity")
+        self._fade_out.setDuration(200)
+        self._fade_out.setStartValue(self._opacity_effect.opacity())
+        self._fade_out.setEndValue(0.0)
+        self._fade_out.setEasingCurve(QEasingCurve.InCubic)
+        self._fade_out.finished.connect(self._on_fade_out_done)
+        self._fade_out.start()
+
+    def _on_fade_out_done(self):
+        self._fade_out = None
+        self._state = ToastState.IDLE
+        if self._pending_content is not None:
+            content = self._pending_content
+            self._pending_content = None
+            self._current_content = content
+            self._update_content(content[0], content[1])
+            self._transition_to(ToastState.FADING_IN)
+            self._start_fade_in()
+        else:
+            self.hide()
+            self._remove_anchor_filter()
+
+    def _remove_anchor_filter(self):
+        if self._anchor is not None:
+            try:
+                self._anchor.removeEventFilter(self)
+            except Exception:
+                pass
+
+    def _cancel_animations(self):
+        for anim in (self._fade_in, self._fade_out):
+            if anim is not None:
+                try:
+                    anim.finished.disconnect()
+                except TypeError:
+                    pass
+                anim.stop()
+        self._fade_in = None
+        self._fade_out = None
+        if self._dismiss_timer is not None:
+            try:
+                self._dismiss_timer.timeout.disconnect()
+            except TypeError:
+                pass
+            self._dismiss_timer.stop()
+            self._dismiss_timer = None
+
+    def _position_over_anchor(self):
+        if self._anchor is None:
+            return
+        top_left = self._anchor.mapToGlobal(QPoint(0, 0))
+        pw = self._anchor.width()
+        ph = self._anchor.height()
+        toast_w = int(pw * 0.78)
+        x = top_left.x() + (pw - toast_w) // 2
+        y = top_left.y() + ph - self.height() - get_spacing("md")
+        self.setGeometry(x, y, toast_w, self.height())
+
+    def eventFilter(self, obj, event):
+        if obj is self._anchor and event.type() in (event.Move, event.Resize):
+            if self._state != ToastState.IDLE:
+                self._position_over_anchor()
+        return False
+
+
 class VideoWidget(QFrame):
-    warn_updated = pyqtSignal(str)
     frame_updated = pyqtSignal(dict)
+    _render_requested = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -20,28 +236,32 @@ class VideoWidget(QFrame):
         self._show_face_boxes = False
         self._current_face_boxes = []
         self.init_ui()
-        self._register_interface_callback()
+        self._render_requested.connect(self._do_render)
 
-    def _register_interface_callback(self):
-        interface_manager.register_video_frame_callback(self.on_video_frame_received)
-
-    def on_video_frame_received(self, data: VideoFrameData):
+    def render_frame(self, data):
+        """子线程安全：仅存储数据并 emit 信号，实际渲染由主线程 _do_render 执行"""
         if not self.is_running:
             return
         self.current_frame_data = data
         self._current_face_boxes = list(data.faces) if data.faces else []
-        self.update_frame(data)
         self.frame_updated.emit({
             "faces": data.faces,
             "timestamp": data.timestamp,
         })
+        self._render_requested.emit(data)
+
+    def _do_render(self, data):
+        """在主线程执行 Qt 渲染操作"""
+        if not self.is_running:
+            return
+        self.update_frame(data)
 
     def update_frame(self, processed_data=None):
         if processed_data is None:
             processed_data = self.current_frame_data
         if processed_data is None:
             return
-        if isinstance(processed_data, VideoFrameData):
+        if hasattr(processed_data, 'frame') and hasattr(processed_data, 'faces'):
             self._render_frame_with_faces(processed_data.frame, processed_data.faces)
         else:
             self._render_frame_with_faces(None, [])
@@ -62,7 +282,7 @@ class VideoWidget(QFrame):
 
                 if self._show_face_boxes and self._current_face_boxes:
                     painter = QPainter(scaled_pixmap)
-                    pen = QPen(QColor("#00FF00"), 2)
+                    pen = QPen(QColor(COLORS["focus_high"]), 2)
                     painter.setPen(pen)
                     scale_x = scaled_pixmap.width() / w
                     scale_y = scaled_pixmap.height() / h
@@ -105,47 +325,14 @@ class VideoWidget(QFrame):
         self.video_label.setStyleSheet(get_style("video_placeholder"))
         layout.addWidget(self.video_label)
 
-        # ---- 警告栏 ----
-        self.warn_bar = QFrame()
-        self.warn_bar.setFixedHeight(52)
-        self.warn_bar.setStyleSheet(get_style("warn_bar"))
-        warn_layout = QHBoxLayout(self.warn_bar)
-        warn_layout.setContentsMargins(
-            get_spacing("base"), get_spacing("sm"),
-            get_spacing("base"), get_spacing("sm"),
-        )
-        warn_icon = QFrame()
-        warn_icon.setFixedSize(6, 6)
-        warn_icon.setStyleSheet(
-            f"background-color: {COLORS['danger']}; border-radius: 3px;"
-        )
-        self.warn_text = QLabel("当前专注度值低于阈值，请注意")
-        self.warn_text.setFont(QFont(*get_font("base", "normal", "ui")))
-        self.warn_text.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; background: transparent;"
-        )
-        warn_layout.addWidget(warn_icon)
-        warn_layout.addWidget(self.warn_text)
-        warn_layout.addStretch()
-        self.warn_bar.hide()
-        layout.addWidget(self.warn_bar)
 
-        self.warn_updated.connect(self.update_warn)
-
-    def update_warn(self, text):
-        if text:
-            self.warn_text.setText(text)
-            self.warn_bar.show()
-        else:
-            self.warn_bar.hide()
 
     def start_processing(self):
         self.is_running = True
         self.video_label.setText("预处理模块运行中...")
         self.video_label.setStyleSheet(
             f"color: {COLORS['focus_high']}; "
-            f"background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.8, "
-            f"fx:0.5, fy:0.5, stop:0 #1A1A3A, stop:1 {COLORS['background']}); "
+            f"background-color: {COLORS['background']}; "
             f"border-radius: {SIZES['radius']['base']}px;"
         )
 

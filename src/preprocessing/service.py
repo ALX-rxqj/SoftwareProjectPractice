@@ -34,6 +34,7 @@ class PreprocessingService:
         video_frame_callback: Optional[VideoFrameCallback] = None,
         frame_received_callback: Optional[FrameReceivedCallback] = None,
         camera_list_callback: Optional[CameraListCallback] = None,
+        progress_callback: Optional[Callable[[str, float], None]] = None,
     ):
         self.ui_callback = ui_callback
         self.feature_callback = feature_callback
@@ -41,7 +42,11 @@ class PreprocessingService:
         self.video_frame_callback = video_frame_callback
         self.frame_received_callback = frame_received_callback
         self.camera_list_callback = camera_list_callback
+        self._progress_callback = progress_callback or (lambda msg, pct: None)
+
         self.pipeline = PreprocessingPipeline(config=config, logger=self.log_callback)
+        self._progress_callback("加载人脸检测模型...", 0.3)
+
         self.video_source = VideoSource()
         self._stop_event = threading.Event()
         self._worker: Optional[threading.Thread] = None
@@ -52,10 +57,14 @@ class PreprocessingService:
         self._face_embedding_writer: Optional[EmbeddingWriter] = None
         self._database_backend = PreprocessingDatabaseBackend()
         self._embedding_extractor = FaceEmbeddingExtractor()
-        self._registration_detector = FaceDetector((config or PipelineConfig()).min_face_size)
+        self._progress_callback("加载人脸识别模型...", 0.6)
+
+        self._registration_detector: Optional[FaceDetector] = None
         self._match_threshold = 0.6
         self._last_owner_face_id: Any = -1
         self._initialize_database_backend()
+        self._progress_callback("初始化数据库...", 0.9)
+        self._progress_callback("预处理模块就绪", 1.0)
 
     def handle_command(self, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
         if command == "toggle_capture":
@@ -376,6 +385,15 @@ class PreprocessingService:
                 embeddings_count=0,
             )
 
+    def _get_registration_detector(self) -> FaceDetector:
+        if self._registration_detector is None:
+            yolo_model = self.pipeline._detector._yolo
+            self._registration_detector = FaceDetector(
+                self.pipeline.config.min_face_size,
+                yolo_model=yolo_model,
+            )
+        return self._registration_detector
+
     def _extract_embeddings_from_frames(
         self, frames: Sequence[np.ndarray]
     ) -> List[Tuple[np.ndarray, str]]:
@@ -384,7 +402,7 @@ class PreprocessingService:
         for frame, pose_type in zip(frames, pose_types):
             if frame is None or getattr(frame, "size", 0) == 0:
                 continue
-            detections = self._registration_detector.detect(frame, self.pipeline.config.roi_size)
+            detections = self._get_registration_detector().detect(frame, self.pipeline.config.roi_size)
             best = self._pick_best_detection(detections, frame.shape)
             if best is None:
                 continue

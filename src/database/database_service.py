@@ -5,7 +5,7 @@
 query_sessions, query_focus_records, query_alert_events。
 """
 
-import sqlite3
+from sqlcipher3 import dbapi2 as sqlite3
 import time
 from typing import Any, Dict, List, Optional
 

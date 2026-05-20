@@ -25,7 +25,7 @@ def create_card_shadow(elevated: bool = False) -> QGraphicsDropShadowEffect:
     shadow = QGraphicsDropShadowEffect()
     blur = SIZES["shadow"]["blur_elevated" if elevated else "blur_card"]
     offset_y = SIZES["shadow"]["offset_y_elevated" if elevated else "offset_y_card"]
-    color_key = "shadow_color_deep" if elevated else "primary_glow"
+    color_key = "shadow_color_deep" if elevated else "shadow_color"
 
     shadow.setBlurRadius(blur)
     shadow.setXOffset(0)

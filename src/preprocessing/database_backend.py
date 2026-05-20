@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from src.database.connection import connection_manager
+from src.database.schema import schema_manager
+from sqlcipher3 import dbapi2 as sqlite3
+
 
 class PreprocessingDatabaseBackend:
-    """Direct SQLite backend for preprocessing-only face registry access."""
+    """预处理模块人脸注册数据访问，复用 ConnectionManager 的加密连接"""
 
     def __init__(self, db_path: str | None = None):
         self.db_path = Path(db_path) if db_path else self._default_db_path()
-        self._connection: Optional[sqlite3.Connection] = None
 
     @staticmethod
     def _default_db_path() -> Path:
@@ -23,45 +25,18 @@ class PreprocessingDatabaseBackend:
 
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(
-            str(self.db_path), check_same_thread=False, timeout=5.0
-        )
-        self._connection.row_factory = sqlite3.Row
-        self._connection.execute("PRAGMA journal_mode=WAL")
-        self._connection.execute("PRAGMA foreign_keys = ON")
-        self._ensure_schema()
+        if not connection_manager.is_connected:
+            connection_manager.initialize(str(self.db_path))
+        conn = connection_manager.get_connection()
+        schema_manager.ensure_schema(conn)
 
     def is_ready(self) -> bool:
-        return self._connection is not None
+        return connection_manager.is_connected
 
     def _ensure_connection(self) -> sqlite3.Connection:
-        if self._connection is None:
+        if not connection_manager.is_connected:
             self.initialize()
-        return self._connection
-
-    def _ensure_schema(self) -> None:
-        conn = self._ensure_connection()
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS registered_students (
-                face_id       TEXT PRIMARY KEY,
-                student_name  TEXT NOT NULL,
-                registered_at REAL NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS face_embeddings (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                face_id     TEXT NOT NULL,
-                embedding   BLOB NOT NULL,
-                pose_type   TEXT,
-                FOREIGN KEY (face_id) REFERENCES registered_students(face_id) ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_face_embeddings_face_id
-                ON face_embeddings(face_id);
-            """
-        )
-        conn.commit()
+        return connection_manager.get_connection()
 
     def insert_face_embeddings_batch(
         self,

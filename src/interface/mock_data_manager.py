@@ -159,9 +159,12 @@ class MockDataManager:
             weighted_sum += value * config.weight
             total_weight += config.weight
 
-        scores["final_focus"] = weighted_sum / total_weight if total_weight > 0 else 0.0
+        final_focus = weighted_sum / total_weight if total_weight > 0 else 0.0
+        scores["final_focus"] = final_focus
 
-        return {k: int(v) if isinstance(v, float) and v.is_integer() else v for k, v in scores.items()}
+        result = {k: int(v) if isinstance(v, float) and v.is_integer() else v for k, v in scores.items()}
+        result["warn_info"] = self._generate_warn_msg()
+        return result
 
     def generate_focus_result(self, session_id: str = "test_session") -> Dict[str, Any]:
         """
@@ -186,12 +189,12 @@ class MockDataManager:
             "final_focus_score": scores.get("final_focus", 85.0),
             "is_force_zero": False,
             "is_over_threshold": False,
-            "warn_info": self._generate_warn_msg(scores.get("final_focus", 85.0))
+            "warn_info": self._generate_warn_msg()
         }
 
-    def _generate_warn_msg(self, focus_score: float) -> Optional[Dict[str, str]]:
-        """根据专注度分数生成随机告警消息"""
-        if focus_score < 60 and random.random() < 0.3:
+    def _generate_warn_msg(self) -> Optional[Dict[str, str]]:
+        """随机生成告警消息（约 15% 概率）"""
+        if random.random() < 0.150:
             warn_types = [
                 {"type": "低分告警", "detail": "专注度低于阈值"},
                 {"type": "行为异常", "detail": "检测到走神行为"},

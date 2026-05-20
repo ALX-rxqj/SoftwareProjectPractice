@@ -25,33 +25,32 @@ def get_style(style_name: str) -> str:
         """,
 
         "container_gradient": f"""
-            background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 {COLORS['surface']}, stop:0.6 {COLORS['surface']},
-                stop:1 #1A1A38);
+            background-color: {COLORS['surface']};
             border: none;
             border-radius: {SIZES['radius']['xxl']}px;
         """,
 
         "card_elevated_glass": f"""
-            background-color: rgba(38, 38, 80, 0.85);
+            background-color: rgba(33, 38, 45, 0.92);
             border: none;
             border-radius: {SIZES['radius']['xxl']}px;
         """,
 
         "avatar_gradient": f"""
             background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 {COLORS['primary']}, stop:1 {COLORS['secondary']});
+                stop:0 {COLORS['primary']}, stop:1 {COLORS['primary_dark']});
+            border-radius: 18px;
         """,
 
         "card_section": f"""
-            background-color: rgba(34, 34, 69, 0.5);
+            background-color: {COLORS['card']};
             border: none;
             border-radius: {SIZES['radius']['lg']}px;
         """,
 
         "filter_group_wrapper": f"""
             QWidget {{
-                background-color: rgba(34, 34, 69, 0.5);
+                background-color: {COLORS['card']};
                 border: none;
                 border-radius: {SIZES['radius']['lg']}px;
                 padding: {SIZES['spacing']['sm']}px {SIZES['spacing']['base']}px;
@@ -65,15 +64,13 @@ def get_style(style_name: str) -> str:
         """,
 
         "card_glass": f"""
-            background-color: rgba(38, 38, 80, 0.65);
-            border: 1px solid rgba(58, 58, 96, 0.4);
+            background-color: rgba(33, 38, 45, 0.75);
+            border: 1px solid rgba(72, 79, 88, 0.3);
             border-radius: {SIZES['radius']['xl']}px;
         """,
 
         "frame_sidebar": f"""
-            background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 {COLORS['surface']}, stop:0.6 {COLORS['surface']},
-                stop:1 #1C1C3F);
+            background-color: {COLORS['surface']};
             border: none;
             border-radius: {SIZES['radius']['xxl']}px;
         """,
@@ -85,62 +82,53 @@ def get_style(style_name: str) -> str:
         """,
 
         "nav_bar_gradient": f"""
-            background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 {COLORS['surface']}, stop:0.5 #1C1C40,
-                stop:1 {COLORS['surface']});
+            background-color: {COLORS['surface']};
             border: none;
+            border-bottom: 1px solid {COLORS['border']};
             border-radius: {SIZES['radius']['xxl']}px;
         """,
 
-        "surface_radial": f"""
-            background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.7,
-                fx:0.5, fy:0.5,
-                stop:0 rgba(122, 92, 255, 0.18),
-                stop:0.5 rgba(122, 92, 255, 0.06),
-                stop:1 rgba(0, 0, 0, 0));
-            border-radius: {SIZES['radius']['xxl']}px;
-        """,
+        # surface_radial 已移除 — 极简路线不再使用径向发光背景
 
         "title_section": f"""
-            border-bottom: 2px solid qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 {COLORS['primary']}, stop:1 transparent);
+            border-bottom: 1px solid {COLORS['border']};
             padding-bottom: {SIZES['spacing']['sm']}px;
         """,
 
         # ──────────────────── 按钮 ────────────────────
         "button_primary": f"""
             QPushButton {{
-                color: {COLORS['text']};
+                color: {COLORS['background']};
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {COLORS['primary']}, stop:1 {COLORS['secondary']});
+                    stop:0 {COLORS['primary']}, stop:1 {COLORS['primary_dark']});
                 border: none;
                 border-radius: {SIZES['radius']['base']}px;
                 height: {SIZES['button']['height']}px;
             }}
             QPushButton:hover {{
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {COLORS['primary_light']}, stop:1 {COLORS['secondary']});
+                    stop:0 {COLORS['primary_light']}, stop:1 {COLORS['primary']});
             }}
             QPushButton:pressed {{
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {COLORS['primary_dark']}, stop:1 {COLORS['primary']});
+                    stop:0 {COLORS['primary_dark']}, stop:1 {COLORS['primary_dark']});
             }}
         """,
 
         "button_select": f"""
             QPushButton {{
                 color: {COLORS['text_secondary']};
-                background-color: #3A3A60;
+                background-color: {COLORS['card']};
                 border: 1px solid {COLORS['border_light']};
                 border-radius: {SIZES['radius']['base']}px;
                 height: {SIZES['button']['height']}px;
             }}
             QPushButton:hover {{
-                background-color: #46467A;
-                border-color: #5A5A90;
+                background-color: {COLORS['card_hover']};
+                border-color: {COLORS['text_hint']};
             }}
             QPushButton:pressed {{
-                background-color: #2E2E50;
+                background-color: {COLORS['card_elevated']};
             }}
         """,
 
@@ -170,28 +158,28 @@ def get_style(style_name: str) -> str:
                 height: {SIZES['button']['height']}px;
             }}
             QPushButton:hover {{
-                background-color: #FF8080;
+                background-color: #F98C8C;
             }}
             QPushButton:pressed {{
-                background-color: #E55A5A;
+                background-color: #E06060;
             }}
         """,
 
         "push_button_gradient": f"""
             QPushButton {{
-                color: {COLORS['text']};
+                color: {COLORS['background']};
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {COLORS['primary']}, stop:1 {COLORS['secondary']});
+                    stop:0 {COLORS['primary']}, stop:1 {COLORS['primary_dark']});
                 border: none;
                 border-radius: {SIZES['radius']['lg']}px;
             }}
             QPushButton:hover {{
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {COLORS['primary_light']}, stop:1 {COLORS['secondary']});
+                    stop:0 {COLORS['primary_light']}, stop:1 {COLORS['primary']});
             }}
             QPushButton:pressed {{
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {COLORS['primary_dark']}, stop:1 {COLORS['primary']});
+                    stop:0 {COLORS['primary_dark']}, stop:1 {COLORS['primary_dark']});
             }}
         """,
 
@@ -212,18 +200,18 @@ def get_style(style_name: str) -> str:
             QPushButton {{
                 color: {COLORS['text']};
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {COLORS['primary']}, stop:1 {COLORS['secondary']});
+                    stop:0 {COLORS['primary']}, stop:1 {COLORS['primary_dark']});
                 border: none;
                 border-radius: {SIZES['radius']['lg']}px;
             }}
             QPushButton:hover {{
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {COLORS['primary_light']}, stop:1 {COLORS['secondary']});
-                border: 1px solid rgba(122, 92, 255, 0.4);
+                    stop:0 {COLORS['primary_light']}, stop:1 {COLORS['primary']});
+                border: 1px solid rgba(45, 212, 191, 0.30);
             }}
             QPushButton:pressed {{
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {COLORS['primary_dark']}, stop:1 {COLORS['primary']});
+                    stop:0 {COLORS['primary_dark']}, stop:1 {COLORS['primary_dark']});
             }}
         """,
 
@@ -254,13 +242,13 @@ def get_style(style_name: str) -> str:
             QPushButton:checked {{
                 color: {COLORS['text']};
                 background-color: {COLORS['card']};
-                border: 1px solid rgba(122, 92, 255, 0.35);
+                border: 1px solid rgba(45, 212, 191, 0.25);
                 border-left: 3px solid {COLORS['primary']};
             }}
             QPushButton:hover {{
                 color: {COLORS['text']};
                 background-color: {COLORS['card']};
-                border: 1px solid rgba(122, 92, 255, 0.18);
+                border: 1px solid rgba(45, 212, 191, 0.10);
             }}
         """,
 
@@ -472,24 +460,24 @@ def get_style(style_name: str) -> str:
                 color: {COLORS['text']};
                 border: none;
                 border-radius: {SIZES['radius']['lg']}px;
-                gridline-color: rgba(34, 34, 74, 0.5);
+                gridline-color: rgba(48, 54, 61, 0.5);
             }}
             QTableWidget::item {{
                 padding: {SIZES['spacing']['sm']}px {SIZES['spacing']['md']}px;
             }}
             QTableWidget::item:hover {{
-                background-color: rgba(122, 92, 255, 0.08);
+                background-color: rgba(45, 212, 191, 0.06);
             }}
             QTableWidget::item:selected {{
-                background-color: rgba(122, 92, 255, 0.15);
+                background-color: rgba(45, 212, 191, 0.12);
                 color: {COLORS['text']};
             }}
             QHeaderView::section {{
-                background-color: rgba(21, 21, 48, 0.8);
+                background-color: rgba(22, 27, 34, 0.8);
                 color: {COLORS['text_secondary']};
                 padding: {SIZES['spacing']['sm']}px {SIZES['spacing']['md']}px;
                 border: none;
-                border-bottom: 1px solid rgba(122, 92, 255, 0.15);
+                border-bottom: 1px solid rgba(45, 212, 191, 0.10);
                 font-weight: {FONTS['weight']['semibold']};
             }}
         """,
@@ -507,11 +495,11 @@ def get_style(style_name: str) -> str:
                 padding: 4px;
             }}
             QListWidget::item:selected {{
-                background-color: rgba(122, 92, 255, 0.15);
+                background-color: rgba(45, 212, 191, 0.12);
                 border-left: 3px solid {COLORS['primary']};
             }}
             QListWidget::item:hover {{
-                background-color: rgba(122, 92, 255, 0.08);
+                background-color: rgba(45, 212, 191, 0.06);
             }}
         """,
 
@@ -561,14 +549,14 @@ def get_style(style_name: str) -> str:
         """,
 
         "badge_success": f"""
-            background-color: rgba(0, 224, 128, 0.15);
+            background-color: rgba(74, 222, 128, 0.12);
             color: {COLORS['focus_high']};
             border-radius: {SIZES['radius']['lg']}px;
             padding: {SIZES['spacing']['xs']}px {SIZES['spacing']['md']}px;
         """,
 
         "badge_danger": f"""
-            background-color: rgba(255, 107, 107, 0.15);
+            background-color: rgba(248, 113, 113, 0.12);
             color: {COLORS['danger']};
             border-radius: {SIZES['radius']['lg']}px;
             padding: {SIZES['spacing']['xs']}px {SIZES['spacing']['md']}px;
@@ -592,15 +580,13 @@ def get_style(style_name: str) -> str:
 
         # ──────────────────── 视频 ────────────────────
         "video_placeholder": f"""
-            background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.8,
-                fx:0.5, fy:0.5,
-                stop:0 #1A1A3A, stop:1 {COLORS['background']});
+            background-color: {COLORS['background']};
             color: {COLORS['text_hint']};
             border-radius: {SIZES['radius']['xl']}px;
         """,
 
         "warn_bar": f"""
-            background-color: rgba(255, 107, 107, 0.12);
+            background-color: rgba(248, 113, 113, 0.10);
             border-left: 3px solid {COLORS['danger']};
             border-radius: {SIZES['radius']['lg']}px;
         """,
@@ -619,10 +605,10 @@ def get_style(style_name: str) -> str:
                 border-radius: {SIZES['radius']['sm']}px;
             }}
             QSplitter::handle:hover {{
-                background-color: rgba(122, 92, 255, 0.08);
+                background-color: rgba(45, 212, 191, 0.06);
             }}
             QSplitter::handle:pressed {{
-                background-color: rgba(122, 92, 255, 0.15);
+                background-color: rgba(45, 212, 191, 0.10);
             }}
         """,
 
@@ -680,27 +666,27 @@ def get_style(style_name: str) -> str:
             QPushButton {{
                 color: {COLORS['text']};
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {COLORS['primary']}, stop:1 {COLORS['secondary']});
-                border: 1px solid rgba(122, 92, 255, 0.3);
+                    stop:0 {COLORS['primary']}, stop:1 {COLORS['primary_dark']});
+                border: 1px solid rgba(45, 212, 191, 0.25);
                 border-radius: {SIZES['radius']['base']}px;
                 font-weight: {FONTS['weight']['bold']};
             }}
             QPushButton:hover {{
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {COLORS['primary_light']}, stop:1 {COLORS['secondary']});
-                border: 1px solid rgba(122, 92, 255, 0.5);
+                    stop:0 {COLORS['primary_light']}, stop:1 {COLORS['primary']});
+                border: 1px solid rgba(45, 212, 191, 0.40);
             }}
             QPushButton:pressed {{
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {COLORS['primary_dark']}, stop:1 {COLORS['primary']});
+                    stop:0 {COLORS['primary_dark']}, stop:1 {COLORS['primary_dark']});
             }}
         """,
 
         # ──────────────────── 完成页按钮 ────────────────────
         "completion_btn_local": f"""
             QPushButton {{
-                color: #FFFFFF;
-                background-color: #4A7CFF;
+                color: {COLORS['background']};
+                background-color: {COLORS['primary']};
                 border: none;
                 border-radius: {SIZES['radius']['base']}px;
                 font-weight: {FONTS['weight']['bold']};
@@ -708,17 +694,17 @@ def get_style(style_name: str) -> str:
                 padding: {SIZES['spacing']['sm']}px {SIZES['spacing']['xl']}px;
             }}
             QPushButton:hover {{
-                background-color: #5B8DFF;
+                background-color: {COLORS['primary_light']};
             }}
             QPushButton:pressed {{
-                background-color: #3960CC;
+                background-color: {COLORS['primary_dark']};
             }}
         """,
 
         "completion_btn_temp": f"""
             QPushButton {{
-                color: #FFFFFF;
-                background-color: #00C853;
+                color: {COLORS['background']};
+                background-color: {COLORS['success']};
                 border: none;
                 border-radius: {SIZES['radius']['base']}px;
                 font-weight: {FONTS['weight']['bold']};
@@ -726,28 +712,28 @@ def get_style(style_name: str) -> str:
                 padding: {SIZES['spacing']['sm']}px {SIZES['spacing']['xl']}px;
             }}
             QPushButton:hover {{
-                background-color: #00E070;
+                background-color: #6BEE9B;
             }}
             QPushButton:pressed {{
-                background-color: #009940;
+                background-color: #3AC870;
             }}
         """,
 
         "completion_btn_cancel": f"""
             QPushButton {{
-                color: #4A7CFF;
-                background-color: #FFFFFF;
-                border: 1px solid #4A7CFF;
+                color: {COLORS['primary']};
+                background-color: transparent;
+                border: 1px solid {COLORS['primary']};
                 border-radius: {SIZES['radius']['base']}px;
                 font-weight: {FONTS['weight']['medium']};
                 font-size: {FONTS['size']['base']}px;
                 padding: {SIZES['spacing']['sm']}px {SIZES['spacing']['xl']}px;
             }}
             QPushButton:hover {{
-                background-color: #F0F4FF;
+                background-color: rgba(45, 212, 191, 0.08);
             }}
             QPushButton:pressed {{
-                background-color: #E0E8F8;
+                background-color: rgba(45, 212, 191, 0.15);
             }}
         """,
 

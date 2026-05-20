@@ -17,13 +17,13 @@ from PyQt5.QtWidgets import (
 )
 
 from .styles import COLORS, SIZES, get_style, get_font, get_spacing
-from .interface_manager import interface_manager
+from .unified_data_manager import unified_data_manager
 
 # 4 个采集姿势
 POSE_GUIDES = [
     "请正对摄像头，保持面部居中",
-    "请将头部转向左侧",
-    "请将头部转向右侧",
+    "请将头部转向左侧45°",
+    "请将头部转向右侧45°",
     "请略微低头，俯视摄像头",
 ]
 
@@ -40,6 +40,8 @@ class FaceRegistrationDialog(QDialog):
 
     registration_completed = pyqtSignal(dict)
     face_registration_success = pyqtSignal()
+    _preview_frame_ready = pyqtSignal(object)
+    _registration_result_ready = pyqtSignal(dict)
     _camera_started_externally = False
 
     def __init__(self, device_id: int, parent=None):
@@ -86,7 +88,7 @@ class FaceRegistrationDialog(QDialog):
         )
 
         title_label = QLabel("人脸注册")
-        title_label.setFont(QFont(*get_font("lg", "bold", "display")))
+        title_label.setFont(QFont(*get_font("lg", "bold", "ui")))
         title_label.setStyleSheet(
             f"color: {COLORS['text']}; background: transparent;"
         )
@@ -146,13 +148,13 @@ class FaceRegistrationDialog(QDialog):
 
         icon_label = QLabel("📷")
         icon_label.setAlignment(Qt.AlignCenter)
-        icon_label.setFont(QFont(*get_font("hero", "normal", "display")))
+        icon_label.setFont(QFont(*get_font("hero", "normal", "ui")))
         icon_label.setStyleSheet("background: transparent;")
         layout.addWidget(icon_label)
 
         notice_title = QLabel("需要打开摄像头")
         notice_title.setAlignment(Qt.AlignCenter)
-        notice_title.setFont(QFont(*get_font("xl", "bold", "display")))
+        notice_title.setFont(QFont(*get_font("xl", "bold", "ui")))
         notice_title.setStyleSheet(
             f"color: {COLORS['text']}; background: transparent;"
         )
@@ -230,7 +232,7 @@ class FaceRegistrationDialog(QDialog):
         # 姿势引导文字
         self.pose_guide_label = QLabel(POSE_GUIDES[0])
         self.pose_guide_label.setAlignment(Qt.AlignCenter)
-        self.pose_guide_label.setFont(QFont(*get_font("xl", "bold", "display")))
+        self.pose_guide_label.setFont(QFont(*get_font("xl", "bold", "ui")))
         self.pose_guide_label.setStyleSheet(get_style("pose_guide_label"))
         layout.addWidget(self.pose_guide_label)
 
@@ -299,7 +301,7 @@ class FaceRegistrationDialog(QDialog):
 
         check_label = QLabel("✓")
         check_label.setAlignment(Qt.AlignCenter)
-        check_label.setFont(QFont(*get_font("hero", "extrabold", "display")))
+        check_label.setFont(QFont(*get_font("hero", "extrabold", "ui")))
         check_label.setStyleSheet(
             f"color: {COLORS['success']}; background: transparent;"
         )
@@ -307,7 +309,7 @@ class FaceRegistrationDialog(QDialog):
 
         success_title = QLabel("采集成功")
         success_title.setAlignment(Qt.AlignCenter)
-        success_title.setFont(QFont(*get_font("xl", "bold", "display")))
+        success_title.setFont(QFont(*get_font("xl", "bold", "ui")))
         success_title.setStyleSheet(
             f"color: {COLORS['text']}; background: transparent;"
         )
@@ -369,6 +371,8 @@ class FaceRegistrationDialog(QDialog):
 
     def connect_signals(self):
         self.finished.connect(self._cleanup)
+        self._preview_frame_ready.connect(self._render_frame)
+        self._registration_result_ready.connect(self._on_registration_result_ui)
 
     # ─── 生命周期 ─────────────────────────────────────
 
@@ -404,12 +408,12 @@ class FaceRegistrationDialog(QDialog):
         """统一清理：关闭摄像头 + 清除回调 + 清空缓冲区"""
         if self._capture_started:
             print("[FaceRegistrationDialog] 清理摄像头资源")
-            interface_manager.toggle_capture(
+            unified_data_manager.toggle_capture(
                 device_id=self._device_id, start=False
             )
             self._capture_started = False
-        interface_manager.clear_face_registration_frame_callback()
-        interface_manager.clear_face_registration_result_callback()
+        unified_data_manager.clear_face_registration_frame_callback()
+        unified_data_manager.clear_face_registration_result_callback()
         self._frame_buffer.clear()
         self._collected_frames.clear()
 
@@ -428,7 +432,7 @@ class FaceRegistrationDialog(QDialog):
 
         self.processing_spinner = QLabel("⏳")
         self.processing_spinner.setAlignment(Qt.AlignCenter)
-        self.processing_spinner.setFont(QFont(*get_font("hero", "normal", "display")))
+        self.processing_spinner.setFont(QFont(*get_font("hero", "normal", "ui")))
         self.processing_spinner.setStyleSheet(
             f"color: {COLORS['primary']}; background: transparent;"
         )
@@ -436,7 +440,7 @@ class FaceRegistrationDialog(QDialog):
 
         processing_title = QLabel("正在处理人脸数据")
         processing_title.setAlignment(Qt.AlignCenter)
-        processing_title.setFont(QFont(*get_font("xl", "bold", "display")))
+        processing_title.setFont(QFont(*get_font("xl", "bold", "ui")))
         processing_title.setStyleSheet(
             f"color: {COLORS['text']}; background: transparent;"
         )
@@ -474,7 +478,7 @@ class FaceRegistrationDialog(QDialog):
         self._student_name = name
 
         print(f"[FaceRegistrationDialog] 开启摄像头 device_id={self._device_id}")
-        result = interface_manager.toggle_capture(
+        result = unified_data_manager.toggle_capture(
             device_id=self._device_id, start=True
         )
         if not result.get("success", False):
@@ -482,7 +486,7 @@ class FaceRegistrationDialog(QDialog):
             return
 
         self._capture_started = True
-        interface_manager.register_face_registration_frame_callback(
+        unified_data_manager.register_face_registration_frame_callback(
             self._on_frame_received
         )
         self._buffer_start_time = time.time()
@@ -499,15 +503,13 @@ class FaceRegistrationDialog(QDialog):
     # ─── 采集页逻辑 ───────────────────────────────────
 
     def _on_frame_received(self, frame, faces, timestamp):
-        """接收摄像头帧：渲染 + 存入缓冲区"""
+        """接收摄像头帧（子线程安全：仅存缓冲区并 emit 信号）"""
         if not self._capture_started:
             return
         try:
             if frame is not None and len(frame.shape) == 3 and frame.shape[2] == 3:
-                # 存入缓冲区（深拷贝）
                 self._frame_buffer.append((frame.copy(), timestamp))
-                # 渲染到画面
-                self._render_frame(frame)
+                self._preview_frame_ready.emit(frame)
         except Exception as e:
             print(f"[FaceRegistrationDialog] 帧处理错误: {e}")
 
@@ -552,10 +554,10 @@ class FaceRegistrationDialog(QDialog):
         if idx_new >= len(POSE_GUIDES):
             # 采集完成
             self._capture_started = False
-            interface_manager.toggle_capture(
+            unified_data_manager.toggle_capture(
                 device_id=self._device_id, start=False
             )
-            interface_manager.clear_face_registration_frame_callback()
+            unified_data_manager.clear_face_registration_frame_callback()
             self._show_completion()
         else:
             self.pose_guide_label.setText(POSE_GUIDES[idx_new])
@@ -611,7 +613,7 @@ class FaceRegistrationDialog(QDialog):
         self.stacked.setCurrentIndex(2)
 
         # 注册异步结果回调（在发送注册指令之前）
-        interface_manager.register_face_registration_result_callback(
+        unified_data_manager.register_face_registration_result_callback(
             self._on_registration_result
         )
 
@@ -623,18 +625,19 @@ class FaceRegistrationDialog(QDialog):
         })
 
     def _on_registration_result(self, result: dict):
-        """预处理模块异步返回的人脸注册结果"""
-        interface_manager.clear_face_registration_result_callback()
+        """预处理模块异步返回的人脸注册结果（子线程安全：仅清理回调和 emit 信号）"""
+        unified_data_manager.clear_face_registration_result_callback()
+        self._registration_result_ready.emit(result)
 
+    def _on_registration_result_ui(self, result: dict):
+        """在主线程执行注册结果的 UI 更新"""
         if result.get("success"):
             student_name = result.get("student_name", self._student_name)
             face_id = result.get("face_id", "")
-            # 更新处理页为成功状态
             self.processing_spinner.setText("✓")
             self.processing_spinner.setStyleSheet(
                 f"color: {COLORS['success']}; background: transparent;"
             )
-            # 更新文字
             for child in self.stacked.widget(2).children():
                 if isinstance(child, QLabel) and "正在处理" in (child.text() or ""):
                     child.setText(f"注册成功\n学生: {student_name}\nID: {face_id}")

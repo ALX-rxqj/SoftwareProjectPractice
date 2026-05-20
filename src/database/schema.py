@@ -3,7 +3,7 @@
 包含 4 张核心表的 @dataclass 结构，以及 SchemaManager 单例用于建表和版本管理。
 """
 
-import sqlite3
+from sqlcipher3 import dbapi2 as sqlite3
 from dataclasses import dataclass, field
 from typing import Optional
 

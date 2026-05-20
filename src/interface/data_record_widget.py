@@ -33,7 +33,7 @@ class DataRecordWidget(QFrame):
 
         header_layout = QHBoxLayout()
         title_label = QLabel("会话列表")
-        title_label.setFont(QFont(*get_font("xl", "bold", "display")))
+        title_label.setFont(QFont(*get_font("xl", "bold", "ui")))
         title_label.setStyleSheet(get_style("label_title"))
 
         self.filter_info_label = QLabel("")

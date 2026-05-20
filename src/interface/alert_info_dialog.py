@@ -49,7 +49,7 @@ class AlertInfoDialog(QDialog):
         session_id = self._session_data.get("session_id", "")
         short_id = session_id[-8:] if len(session_id) >= 8 else session_id
         title_label = QLabel(f"告警信息 - {short_id}")
-        title_label.setFont(QFont(*get_font("lg", "bold", "display")))
+        title_label.setFont(QFont(*get_font("lg", "bold", "ui")))
         title_label.setStyleSheet(
             f"color: {COLORS['text']}; background: transparent;"
         )
