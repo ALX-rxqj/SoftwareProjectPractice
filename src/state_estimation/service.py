@@ -20,8 +20,8 @@
   - on_query_cameras: 获取摄像头列表（转发预处理模块）
   - on_query_sessions: 查询会话列表（按筛选条件）
   - on_query_records: 查询专注度评分记录（按会话ID）
-  数据类（供其他模块调用）：
-  - on_features_extracted: 接收特征提取模块的 FEI-01 数据
+    数据类（供其他模块调用）：
+    - on_features_extracted: 接收特征提取模块的完整输出字典
   - on_feature_received: 直接接收 FeatureData（内部/兼容）
 """
 
@@ -582,36 +582,46 @@ class StateEstimationService:
     # 数据接收接口（供特征提取模块调用）
     # ================================================================
 
-    def on_features_extracted(self, timestamp: float, face_id: int,
-                              features: Dict[str, Any]):
+    def on_features_extracted(self, feature_output: Dict[str, Any]):
         """
-        接收特征提取模块的 FEI-01 数据
+        接收特征提取模块的完整输出字典
+        输入字典格式（FEI-01接口）：
+        {
+            "timestamp": float,
+            "face_id": str,
+            "face_matched": bool,
+            "features": {
+                "head_pose": {pitch, yaw, roll, confidence},
+                "eye_state": {value, confidence},
+                "is_looking_screen": {value, confidence},
+                "attention_state": {value, confidence},
+                "face_distance_state": {value, confidence},
+                "is_yawning": {value, confidence},
+                "num_face_total": {value, confidence}
+            }
+        }
 
-        FEI-01 接口规范：
-        - 发送方：特征提取模块
-        - 接收方：状态估计模块
-        - 触发条件：仅当 owner_face_id != -1 时发送；无人脸时不发送
+        说明：
+        - face_matched 会被保留在FeatureData中，用于上游追踪和统计
+        - 状态估计主要使用 features 中的各项指标进行评分
+        - 若 face_id 无效或 features 缺失，则按兜底逻辑处理
 
-        features 格式（每个子特征为 {value, confidence} 结构）：
-        - head_pose: {pitch, yaw, roll, confidence}
-        - eye_state: {value: int(0=open, 1=closed), confidence}
-        - is_looking_screen: {value: bool, confidence}
-        - attention_state: {value: int(0=focused,1=distracted,2=sleepy,3=absent), confidence}
-        - face_distance_state: {value: int(0=normal,1=too_far,2=too_close), confidence}
-        - is_yawning: {value: bool, confidence}
-
-        本方法将 FEI-01 格式的 features 字典转换为内部 FeatureData，
+        本方法将完整输出字典转换为内部 FeatureData，
         然后进入统一的评分管线处理。
 
         Args:
-            timestamp: 帧时间戳
-            face_id: 人脸ID（owner_face_id）
-            features: 6 类特征子字典（value/confidence 结构）
+            feature_output: 特征提取模块输出的完整字典
         """
-        # 将 FEI-01 特征字典转换为内部 FeatureData
+        timestamp = float(feature_output.get("timestamp", time.time()))
+        face_id = str(feature_output.get("face_id", "-1"))
+        face_matched = bool(feature_output.get("face_matched", False))
+        features = feature_output.get("features", {}) if isinstance(feature_output, dict) else {}
+
+        # 将输出字典转换为内部 FeatureData（包含所有字段）
         feature_data = FeatureData(
             timestamp=timestamp,
             face_id=face_id,
+            face_matched=face_matched,
             head_pose=features.get("head_pose", {}),
             eye_state=features.get("eye_state", {}),
             is_looking_screen=features.get("is_looking_screen", {}),
@@ -745,26 +755,28 @@ class StateEstimationService:
         """
         while not self._stop_event.is_set():
             if self._mock_feature_enabled:
-                # 生成 FEI-01 格式的模拟特征数据并送入管线
-                timestamp, face_id, features = self._generate_mock_features()
-                self.on_features_extracted(timestamp, face_id, features)
+                # 生成完整输出字典并送入管线
+                feature_output = self._generate_mock_feature_output()
+                self.on_features_extracted(feature_output)
 
             # 控制处理频率（约30fps）
             time.sleep(1.0 / 30.0)
 
-    def _generate_mock_features(self) -> tuple:
+    def _generate_mock_feature_output(self) -> Dict[str, Any]:
         """
-        生成 FEI-01 格式的模拟特征数据（用于测试）
+        生成与 feature_extraction 输出格式一致的模拟字典（用于测试）
 
-        严格按照特征提取模块的真实数据格式生成：
-        每个子特征为 {value, confidence} 结构，
+        严格按照特征提取模块的真实数据格式生成（FEI-01接口）：
+        顶层包含 timestamp / face_id / face_matched / features，
+        其中各子特征遵循 {value, confidence} 结构，
         head_pose 为 {pitch, yaw, roll, confidence}。
 
         Returns:
-            (timestamp, face_id, features)
+            完整输出字典，与service.py输出一致
         """
         timestamp = time.time()
-        face_id = 1  # 模拟单人场景
+        face_id = "face_001"  # 模拟单人场景，face_id为字符串
+        face_matched = True
 
         # 注意力状态离散值
         attention_value = random.choices([0, 1, 2, 3], weights=[0.80, 0.12, 0.05, 0.03])[0]
@@ -821,19 +833,25 @@ class StateEstimationService:
             },
         }
 
-        return timestamp, face_id, features
+        return {
+            "timestamp": timestamp,
+            "face_id": face_id,
+            "face_matched": face_matched,
+            "features": features,
+        }
 
     def _generate_mock_feature_data(self) -> FeatureData:
         """
-        生成模拟 FeatureData（兼容旧接口，内部使用）
+        生成模拟 FeatureData（内部使用）
 
         Returns:
             模拟的 FeatureData
         """
-        timestamp, face_id, features = self._generate_mock_features()
+        feature_output = self._generate_mock_feature_output()
+        features = feature_output.get("features", {})
         return FeatureData(
-            timestamp=timestamp,
-            face_id=face_id,
+            timestamp=float(feature_output.get("timestamp", time.time())),
+            face_id=feature_output.get("face_id", 1),
             head_pose=features.get("head_pose", {}),
             eye_state=features.get("eye_state", {}),
             is_looking_screen=features.get("is_looking_screen", {}),

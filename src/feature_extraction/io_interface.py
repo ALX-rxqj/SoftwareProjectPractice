@@ -74,7 +74,7 @@ class IOInterface:
                 mark_threshold: float = 0.5) -> None:
         """处理单条输入并通过 `send_to_scoring` 回调结果。
 
-        输入 record 示例（参考 prompt.txt）：
+        输入 record 示例：
         {
             "timestamp": 12345.6,
             "faces": [{"face_id":1, "face_roi": face_img}, ...],

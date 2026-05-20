@@ -125,12 +125,26 @@ class FeatureData:
     仅当 owner_face_id != -1 时，特征提取模块才通过
     on_features_extracted() 发送本数据；无人脸时不发送。
 
-    每个子特征均为 {"value": ..., "confidence": float} 结构，
-    其中 head_pose 特殊，为 {pitch, yaw, roll, confidence}。
+    完整输入格式（来自feature_extraction service）：
+    {
+        "timestamp": float,
+        "face_id": str,
+        "face_matched": bool,
+        "features": {
+            "head_pose": {pitch, yaw, roll, confidence},
+            "eye_state": {value: int, confidence},
+            "is_looking_screen": {value: bool, confidence},
+            "attention_state": {value: int, confidence},
+            "face_distance_state": {value: int, confidence},
+            "is_yawning": {value: bool, confidence},
+            "num_face_total": {value: int, confidence}
+        }
+    }
 
     Attributes:
         timestamp: 帧时间戳
-        face_id: 人脸ID（对应 owner_face_id）
+        face_id: 人脸ID（来自 feature_extraction 输出）
+        face_matched: 人脸是否匹配
         head_pose: 头部姿态 {pitch, yaw, roll, confidence}
         eye_state: 眼部状态 {value: int(0=open,1=closed), confidence}
         is_looking_screen: 注视屏幕 {value: bool, confidence}
@@ -140,7 +154,8 @@ class FeatureData:
         num_face_total: 画面人脸总数 {value: int, confidence}
     """
     timestamp: float
-    face_id: int
+    face_id: str
+    face_matched: bool
     head_pose: Dict[str, Any]
     eye_state: Dict[str, Any]
     is_looking_screen: Dict[str, Any]
