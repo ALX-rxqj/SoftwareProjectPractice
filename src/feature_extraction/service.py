@@ -36,6 +36,8 @@ from .io_interface import IOInterface
 # 类型别名
 ScoringCallback = Callable[[Dict[str, Any]], None]
 LogCallback = Callable[[str], None]
+# state callback: timestamp, face_id, features -> None
+StateCallback = Callable[[float, Any, Dict[str, Any]], None]
 
 
 class FeatureExtractionService:
@@ -53,6 +55,7 @@ class FeatureExtractionService:
         mark_model_path: str = 'assets/face_landmarks.onnx',
         scoring_callback: Optional[ScoringCallback] = None,
         log_callback: Optional[LogCallback] = None,
+        state_callback: Optional[StateCallback] = None,
     ):
         """初始化特征提取service。
         
@@ -68,6 +71,8 @@ class FeatureExtractionService:
         )
         self.scoring_callback = scoring_callback or self._default_scoring_callback
         self.log_callback = log_callback or (lambda msg: None)
+        # 可选的状态估计回调（接收 FEI-01 格式的数据）
+        self.state_callback = state_callback
         self.stats = {
             'packets_received': 0,
             'packets_processed': 0,
@@ -122,10 +127,33 @@ class FeatureExtractionService:
             # 记录日志
             self._log_packet_info(packet)
             
-            # 调用IOInterface进行处理
+            # 构造一个 wrapper，在调用 scoring 回调的同时把 FEI-01 格式数据发送给状态估计模块
+            def _send_wrapper(output: Dict[str, Any]) -> None:
+                # 先回调评分/下游
+                try:
+                    self.scoring_callback(output)
+                except Exception:
+                    # 保持容错，不阻塞后续处理
+                    self.log_callback('scoring_callback 处理失败')
+
+                # 同步发送给状态估计（当注册了 state_callback 且有 owner_face_id 时）
+                try:
+                    if self.state_callback and isinstance(output, dict):
+                        ts = float(output.get('timestamp', 0.0))
+                        face_id = output.get('face_id', -1)
+                        features = output.get('features', {})
+                        if face_id is not None and face_id != -1:
+                            # 按 FEI-01 规范转发 features
+                            try:
+                                self.state_callback(ts, face_id, features)
+                            except Exception:
+                                self.log_callback('state_callback 处理失败')
+                except Exception:
+                    self.log_callback('向状态估计转发时发生错误')
+
             self.io_interface.process(
                 record=packet,
-                send_to_scoring=self.scoring_callback
+                send_to_scoring=_send_wrapper
             )
             
             self.stats['packets_processed'] += 1
