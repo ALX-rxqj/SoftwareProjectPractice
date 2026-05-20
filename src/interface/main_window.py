@@ -1,5 +1,5 @@
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QStackedLayout, QSplitter, QMenu, QFileDialog, QMessageBox, QLabel
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QStackedLayout, QSplitter, QMenu, QFileDialog, QMessageBox, QApplication
 
 from .config import WINDOW_WIDTH, WINDOW_HEIGHT, TOP_NAV_HEIGHT, LEFT_BAR_WIDTH, RIGHT_PANEL_WIDTH
 from .styles import get_style, get_spacing, SIZES, COLORS
@@ -17,6 +17,8 @@ from .export_report_util import export_to_excel, export_to_pdf
 
 
 class MainWindow(QMainWindow):
+    _init_progress_signal = pyqtSignal(str, float)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("网课专注度分析系统")
@@ -30,17 +32,28 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.toast_widget = ToastWidget(anchor=self.video_widget)
         self.connect_signals()
+        self._init_progress_signal.connect(self._on_init_progress_label)
         self._start_async_init()
 
     def _start_async_init(self):
         """快速显示窗口，后台异步加载预处理模型。"""
+
+        need_loading_label = (
+            unified_data_manager.preprocessing_source.value == "real"
+        )
+
+        if need_loading_label:
+            self.video_widget.show_loading_overlay("正在初始化模型...")
+            QApplication.processEvents()
 
         # 数据库（同步，轻量）
         if not unified_data_manager.initialize_database():
             print("[MainWindow] 警告: 数据库初始化失败，历史数据功能不可用")
 
         # 统一初始化后端（Mock 适配器 / REAL 后端加载）
-        if not unified_data_manager.initialize_all_backends():
+        if not unified_data_manager.initialize_all_backends(
+            progress_callback=self._on_init_progress
+        ):
             print("[MainWindow] 错误: 后端初始化失败")
 
         unified_data_manager.register_camera_list_callback(self.on_camera_list_received)
@@ -49,25 +62,29 @@ class MainWindow(QMainWindow):
         unified_data_manager.register_video_frame_callback(self._on_video_frame_for_display)
         unified_data_manager.register_focus_result_callback(self._on_focus_result_for_display)
 
-        # 状态栏显示加载进度
-        self._status_label = QLabel("正在初始化模型...")
-        self.statusBar().addPermanentWidget(self._status_label)
+        if need_loading_label:
+            self._init_poll_timer = QTimer()
+            self._init_poll_timer.timeout.connect(self._poll_init_complete)
+            self._init_poll_timer.start(200)
+        else:
+            self.init_data()
 
-        # 轮询后台预处理初始化完成状态
-        self._init_poll_timer = QTimer()
-        self._init_poll_timer.timeout.connect(self._poll_init_complete)
-        self._init_poll_timer.start(200)
+    def _on_init_progress(self, message: str, progress: float):
+        """后台线程进度回调 → 通过信号安全传递到 UI 线程"""
+        self._init_progress_signal.emit(message, progress)
+
+    def _on_init_progress_label(self, message: str, progress: float):
+        """UI 线程更新视频覆盖层的进度文本"""
+        self.video_widget.update_loading_progress(message, progress)
 
     def _poll_init_complete(self):
         """轮询：检查后台预处理初始化是否完成。"""
         if not unified_data_manager.init_done:
-            self._status_label.setText("正在初始化模型...")
             return
 
         # 初始化完成
         self._init_poll_timer.stop()
-        self.statusBar().removeWidget(self._status_label)
-        self._status_label = None
+        self.video_widget.hide_loading_overlay()
 
         if unified_data_manager.init_success:
             print("[MainWindow] 已连接真实预处理后端")

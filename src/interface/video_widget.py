@@ -327,6 +327,26 @@ class VideoWidget(QFrame):
 
 
 
+    def show_loading_overlay(self, message: str = "正在初始化模型..."):
+        if not hasattr(self, '_loading_overlay'):
+            self._loading_overlay = _LoadingOverlay(self)
+        self._loading_overlay.set_message(message)
+        self._loading_overlay.show()
+        self._loading_overlay.raise_()
+
+    def update_loading_progress(self, message: str, progress: float):
+        if hasattr(self, '_loading_overlay') and self._loading_overlay.isVisible():
+            self._loading_overlay.set_message(f"{message} ({progress:.0%})")
+
+    def hide_loading_overlay(self):
+        if hasattr(self, '_loading_overlay'):
+            self._loading_overlay.hide()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, '_loading_overlay') and self._loading_overlay.isVisible():
+            self._loading_overlay.setGeometry(self.rect())
+
     def start_processing(self):
         self.is_running = True
         self.video_label.setText("预处理模块运行中...")
@@ -346,3 +366,60 @@ class VideoWidget(QFrame):
 
     def set_preprocessing_callback(self, callback):
         pass
+
+
+class _LoadingOverlay(QFrame):
+    """视频区域半透明加载覆盖层"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"""
+            _LoadingOverlay {{
+                background-color: rgba(13, 17, 23, 0.85);
+                border-radius: {SIZES['radius']['base']}px;
+            }}
+        """)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setSpacing(16)
+
+        self._spinner = QLabel("⏳")
+        self._spinner.setAlignment(Qt.AlignCenter)
+        self._spinner.setFont(QFont(*get_font("xl", "bold", "display")))
+        self._spinner.setStyleSheet("background: transparent;")
+        layout.addWidget(self._spinner)
+
+        self._message = QLabel("正在初始化模型...")
+        self._message.setAlignment(Qt.AlignCenter)
+        self._message.setFont(QFont(*get_font("lg", "normal", "ui")))
+        self._message.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
+        layout.addWidget(self._message)
+
+        self._progress_bar = QLabel()
+        self._progress_bar.setFixedHeight(3)
+        self._progress_bar.setStyleSheet(f"""
+            background-color: {COLORS['primary']};
+            border-radius: 1px;
+        """)
+        self._progress_bar.setFixedWidth(0)
+        layout.addWidget(self._progress_bar, alignment=Qt.AlignCenter)
+
+        self.setGeometry(parent.rect())
+        self.hide()
+
+    def set_message(self, text: str):
+        self._message.setText(text)
+        # 从文本中解析进度百分比，更新进度条
+        import re
+        match = re.search(r'(\d+)%', text)
+        if match:
+            pct = int(match.group(1)) / 100.0
+        elif text.endswith(")"):
+            match = re.search(r'\((\d+)%\)', text)
+            pct = int(match.group(1)) / 100.0 if match else 0.0
+        else:
+            return  # 不更新进度条
+        self._progress_bar.setFixedWidth(int(self.parent().width() * 0.4 * pct))
+
