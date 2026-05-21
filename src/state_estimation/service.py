@@ -612,6 +612,9 @@ class StateEstimationService:
         face_matched = bool(feature_output.get("face_matched", False))
         features = feature_output.get("features", {}) if isinstance(feature_output, dict) else {}
 
+        # 调试：打印 FEI-01 原始输入数据
+        self._debug_fei01_input(feature_output, features)
+
         # 将输出字典转换为内部 FeatureData
         feature_data = FeatureData(
             timestamp=timestamp,
@@ -648,8 +651,14 @@ class StateEstimationService:
         # 计算专注度评分
         session_id = self._session_manager.current_session_id or "unknown"
 
+        # 调试：打印 FeatureData 各字段值
+        self._debug_feature_data(feature_data)
+
         # 使用评估器计算评分（人数从 feature_data.num_face_total 提取）
         scores, is_force_zero, is_over_threshold, warn_candidates = self._estimator.estimate(feature_data)
+
+        # 调试：打印评分结果
+        self._debug_scores(scores, is_force_zero, is_over_threshold, warn_candidates)
 
         # 构建专注度结果
         result = FocusResultData(
@@ -856,6 +865,94 @@ class StateEstimationService:
             num_face_total=features.get("num_face_total", {"value": 1, "confidence": 1.0}),
             face_matched=bool(feature_output.get("face_matched", True)),
         )
+
+    # ================================================================
+    # 调试方法
+    # ================================================================
+
+    @staticmethod
+    def _debug_fei01_input(feature_output: Dict[str, Any], features: Dict[str, Any]):
+        """打印 FEI-01 原始输入字典的关键字段值"""
+        hp = features.get("head_pose", {})
+        eye = features.get("eye_state", {})
+        look = features.get("is_looking_screen", {})
+        attn = features.get("attention_state", {})
+        dist = features.get("face_distance_state", {})
+        yawn = features.get("is_yawning", {})
+        nface = features.get("num_face_total", {})
+
+        attn_labels = {0: "focused", 1: "distracted", 2: "sleepy", 3: "absent"}
+        dist_labels = {0: "normal", 1: "too_far", 2: "too_close"}
+
+        lines = [
+            "=" * 60,
+            "[DEBUG] FEI-01 原始输入数据",
+            f"  timestamp    : {feature_output.get('timestamp', 'N/A')}",
+            f"  face_id      : {feature_output.get('face_id', 'N/A')}",
+            f"  face_matched : {feature_output.get('face_matched', 'N/A')}",
+            "  --- features ---",
+            f"  head_pose         : pitch={hp.get('pitch', '?'):.2f}, yaw={hp.get('yaw', '?'):.2f}, roll={hp.get('roll', '?'):.2f}, conf={hp.get('confidence', '?'):.3f}",
+            f"  eye_state         : value={eye.get('value', '?')} (0=open/1=closed), conf={eye.get('confidence', '?'):.3f}",
+            f"  is_looking_screen : value={look.get('value', '?')}, conf={look.get('confidence', '?'):.3f}",
+            f"  attention_state   : value={attn.get('value', '?')} ({attn_labels.get(attn.get('value', -1), '?')}), conf={attn.get('confidence', '?'):.3f}",
+            f"  face_distance     : value={dist.get('value', '?')} ({dist_labels.get(dist.get('value', -1), '?')}), conf={dist.get('confidence', '?'):.3f}",
+            f"  is_yawning        : value={yawn.get('value', '?')}, conf={yawn.get('confidence', '?'):.3f}",
+            f"  num_face_total    : value={nface.get('value', '?')}, conf={nface.get('confidence', '?'):.3f}",
+            "=" * 60,
+        ]
+        for line in lines:
+            print(line)
+
+    @staticmethod
+    def _debug_feature_data(fd: FeatureData):
+        """打印 FeatureData 各字段的详细值"""
+        hp = fd.head_pose
+        eye = fd.eye_state
+        look = fd.is_looking_screen
+        attn = fd.attention_state
+        dist = fd.face_distance_state
+        yawn = fd.is_yawning
+        nface = fd.num_face_total
+
+        attn_labels = {0: "focused", 1: "distracted", 2: "sleepy", 3: "absent"}
+        dist_labels = {0: "normal", 1: "too_far", 2: "too_close"}
+
+        lines = [
+            "-" * 40,
+            "[DEBUG] FeatureData 输入值",
+            f"  timestamp          : {fd.timestamp}",
+            f"  face_id            : {fd.face_id}",
+            f"  face_matched       : {fd.face_matched}",
+            f"  head_pose          : pitch={hp.get('pitch', 0):.2f}, yaw={hp.get('yaw', 0):.2f}, roll={hp.get('roll', 0):.2f}, conf={hp.get('confidence', 0):.3f}",
+            f"  eye_state          : value={eye.get('value', 0)}, conf={eye.get('confidence', 0):.3f}",
+            f"  is_looking_screen  : value={look.get('value', 0)}, conf={look.get('confidence', 0):.3f}",
+            f"  attention_state    : value={attn.get('value', 0)}({attn_labels.get(attn.get('value', -1), '?')}), conf={attn.get('confidence', 0):.3f}",
+            f"  face_distance_state: value={dist.get('value', 0)}({dist_labels.get(dist.get('value', -1), '?')}), conf={dist.get('confidence', 0):.3f}",
+            f"  is_yawning         : value={yawn.get('value', 0)}, conf={yawn.get('confidence', 0):.3f}",
+            f"  num_face_total     : value={nface.get('value', 0)}, conf={nface.get('confidence', 0):.3f}",
+            "-" * 40,
+        ]
+        for line in lines:
+            print(line)
+
+    @staticmethod
+    def _debug_scores(scores: dict, is_force_zero: bool, is_over_threshold: bool, warn_candidates: tuple):
+        """打印评分结果"""
+        lines = [
+            "[DEBUG] 评分结果",
+            f"  head_pose   : {scores.get('head_pose', 0):.1f}",
+            f"  behavior    : {scores.get('behavior', 0):.1f}",
+            f"  expression  : {scores.get('expression', 0):.1f}",
+            f"  evidence    : {scores.get('evidence', 0):.1f}",
+            f"  people      : {scores.get('people', 0):.1f}",
+            f"  final_focus : {scores.get('final_focus', 0):.1f}",
+            f"  is_force_zero      : {is_force_zero}",
+            f"  is_over_threshold   : {is_over_threshold}",
+            f"  warn_candidates     : {[w.warn_type for w in warn_candidates] if warn_candidates else '无'}",
+            "-" * 40,
+        ]
+        for line in lines:
+            print(line)
 
     # ================================================================
     # 状态查询
