@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple
 
 from .contracts import (
     FeatureData, MonitorMode, WarnInfo,
-    WARN_NO_FACE, WARN_MULTI_FACE,
+    WARN_NO_FACE, WARN_MULTI_FACE, WARN_FACE_MISMATCH,
     WARN_LOW_EVIDENCE, WARN_LOW_HEAD_POSE,
     WARN_LOW_BEHAVIOR, WARN_LOW_EXPRESSION,
     LOW_SCORE_THRESHOLD,
@@ -181,8 +181,16 @@ class FocusEstimator:
                 detail=f"专注度评分过低: {evidence_score:.0f}",
             )
 
-        # 最终专注度 = 人数开关控制
-        if people_score == PEOPLE_SCORE_SINGLE:
+        # 人脸不匹配告警（与人数异常同等优先）
+        face_mismatch_warn = None
+        if not feature_data.face_matched:
+            face_mismatch_warn = WarnInfo(
+                warn_type=WARN_FACE_MISMATCH,
+                detail="人脸不匹配",
+            )
+
+        # 最终专注度 = 人数开关 + 人脸匹配控制
+        if people_score == PEOPLE_SCORE_SINGLE and not face_mismatch_warn:
             final_focus = evidence_score
             is_force_zero = False
         else:
@@ -198,6 +206,8 @@ class FocusEstimator:
         warn_candidates: List[WarnInfo] = []
         if people_warn:
             warn_candidates.append(people_warn)
+        if face_mismatch_warn:
+            warn_candidates.append(face_mismatch_warn)
         if evidence_warn:
             warn_candidates.append(evidence_warn)
         if head_pose_warn:

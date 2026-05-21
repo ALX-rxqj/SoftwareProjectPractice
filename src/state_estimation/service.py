@@ -72,7 +72,7 @@ class StateEstimationService:
         self._stop_event = threading.Event()
 
         # 模拟特征数据（用于测试，后续应从特征提取模块接收）
-        self._mock_feature_enabled = True
+        self._mock_feature_enabled = False
 
         # 模拟评分记录缓存（用于 on_query_records 的 MOCK 模式）
         self._mock_records_cache: Dict[str, List[Dict[str, Any]]] = {}
@@ -582,7 +582,8 @@ class StateEstimationService:
     # ================================================================
 
     def on_features_extracted(self, timestamp: float, face_id: int,
-                              features: Dict[str, Any]):
+                              features: Dict[str, Any],
+                              face_matched: bool = True):
         """
         接收特征提取模块的 FEI-01 数据
 
@@ -606,7 +607,13 @@ class StateEstimationService:
             timestamp: 帧时间戳
             face_id: 人脸ID（owner_face_id）
             features: 6 类特征子字典（value/confidence 结构）
+            face_matched: 人脸是否匹配目标学生（默认 True 向后兼容）
         """
+        # face_matched 可从显式参数或 features 字典中获取
+        fm = face_matched
+        if fm is True and "face_matched" in features:
+            fm = features.get("face_matched", True)
+
         # 将 FEI-01 特征字典转换为内部 FeatureData
         feature_data = FeatureData(
             timestamp=timestamp,
@@ -618,6 +625,7 @@ class StateEstimationService:
             face_distance_state=features.get("face_distance_state", {}),
             is_yawning=features.get("is_yawning", {}),
             num_face_total=features.get("num_face_total", {"value": 1, "confidence": 1.0}),
+            face_matched=fm,
         )
         # 进入统一的评分处理管线
         self.on_feature_received(feature_data)
@@ -818,6 +826,7 @@ class StateEstimationService:
                 "value": num_face_value,
                 "confidence": random.uniform(0.9, 1.0),
             },
+            "face_matched": random.random() > 0.05,  # 5% 概率不匹配
         }
 
         return timestamp, face_id, features
@@ -840,6 +849,7 @@ class StateEstimationService:
             face_distance_state=features.get("face_distance_state", {}),
             is_yawning=features.get("is_yawning", {}),
             num_face_total=features.get("num_face_total", {"value": 1, "confidence": 1.0}),
+            face_matched=features.get("face_matched", True),
         )
 
     # ================================================================

@@ -30,6 +30,7 @@ class MonitorMode(Enum):
 # --- 告警类型常量 ---
 WARN_NO_FACE = "no_face"
 WARN_MULTI_FACE = "multi_face"
+WARN_FACE_MISMATCH = "face_mismatch"
 WARN_LOW_EVIDENCE = "low_evidence"
 WARN_LOW_HEAD_POSE = "low_head_pose"
 WARN_LOW_BEHAVIOR = "low_behavior"
@@ -38,11 +39,12 @@ WARN_LOW_EXPRESSION = "low_expression"
 # 告警优先级映射 — 数值越小优先级越高
 _ALERT_PRIORITY = {
     WARN_NO_FACE: 1,
-    WARN_MULTI_FACE: 1,  # 人数异常同一优先级
-    WARN_LOW_EVIDENCE: 2,
-    WARN_LOW_HEAD_POSE: 3,
-    WARN_LOW_BEHAVIOR: 4,
-    WARN_LOW_EXPRESSION: 5,
+    WARN_MULTI_FACE: 1,
+    WARN_FACE_MISMATCH: 2,
+    WARN_LOW_EVIDENCE: 3,
+    WARN_LOW_HEAD_POSE: 4,
+    WARN_LOW_BEHAVIOR: 5,
+    WARN_LOW_EXPRESSION: 6,
 }
 
 # 降采样窗口占比阈值
@@ -77,7 +79,7 @@ class WarnInfo:
     告警信息数据结构
 
     Attributes:
-        warn_type: 告警类型（no_face, multi_face, low_evidence, low_head_pose, low_behavior, low_expression）
+        warn_type: 告警类型（no_face, multi_face, face_mismatch, low_evidence, low_head_pose, low_behavior, low_expression）
         detail: 告警详情描述
     """
     warn_type: str
@@ -183,6 +185,7 @@ class FeatureData:
         face_distance_state: 人脸距离 {value: int(0=normal,1=too_far,2=too_close), confidence}
         is_yawning: 哈欠检测 {value: bool, confidence}
         num_face_total: 画面人脸总数 {value: int, confidence}
+        face_matched: 人脸是否匹配目标学生
     """
     timestamp: float
     face_id: int
@@ -193,3 +196,4 @@ class FeatureData:
     face_distance_state: Dict[str, Any]
     is_yawning: Dict[str, Any]
     num_face_total: Dict[str, Any] = field(default_factory=lambda: {"value": 1, "confidence": 1.0})
+    face_matched: bool = True
