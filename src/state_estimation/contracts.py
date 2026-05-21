@@ -199,11 +199,9 @@ class FeatureData:
         face_distance_state: 人脸距离 {value: int(0=normal,1=too_far,2=too_close), confidence}
         is_yawning: 哈欠检测 {value: bool, confidence}
         num_face_total: 画面人脸总数 {value: int, confidence}
-        face_matched: 人脸是否匹配目标学生
     """
     timestamp: float
     face_id: str
-    face_matched: bool
     head_pose: Dict[str, Any]
     eye_state: Dict[str, Any]
     is_looking_screen: Dict[str, Any]

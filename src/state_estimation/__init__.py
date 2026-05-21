@@ -2,13 +2,14 @@
 状态估计模块 - State Estimation Module
 
 本模块负责：
-1. 接收预处理模块的人脸特征数据
+1. 接收特征提取模块的 FEI-01 格式数据
 2. 计算专注度评分（头部姿态、行为动作、表情、证据融合、人数项）
 3. 管理分析会话的生命周期
 4. 支持网课模式(class)和考试模式(exam)两种评分策略
 5. 通过SEI-01接口向界面模块输出专注度评分结果
 
 对外公开接口（StateEstimationService.on_* 系列）：
+- on_features_extracted: 接收特征提取模块的 FEI-01 数据
 - on_control_capture: 启动/停止视频采集（转发预处理模块）
 - on_load_video: 加载本地视频文件（转发预处理模块）
 - on_control_analysis: 启动/停止专注度分析

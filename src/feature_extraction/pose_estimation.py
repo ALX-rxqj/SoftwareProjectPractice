@@ -1,5 +1,9 @@
+import os as _os
+
 import cv2
 import numpy as np
+
+_MODEL_TXT = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'assets', 'model.txt')
 
 
 class PoseEstimator:
@@ -31,7 +35,7 @@ class PoseEstimator:
         self.t_vec = np.array(
             [[-14.97821226], [-10.62040383], [-2053.03596872]])
 
-    def _get_full_model_points(self, filename='assets/model.txt'):
+    def _get_full_model_points(self, filename=_MODEL_TXT):
         """从文件中读取全部 68 个三维模型点。"""
         raw_value = []
         with open(filename) as file:

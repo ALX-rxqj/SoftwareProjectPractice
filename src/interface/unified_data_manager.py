@@ -86,6 +86,7 @@ class UnifiedDataManager:
 
         self._preprocessing_service = None
         self._state_estimation_service = None
+        self._feature_extraction_service = None
 
         self._mock_video_timer: Optional[QTimer] = None
         self._mock_focus_timer: Optional[QTimer] = None
@@ -691,6 +692,13 @@ class UnifiedDataManager:
             interface_manager.set_preprocessing_callback(adapter)
             self._preprocessing_service = service
 
+            # 若特征提取模块已就绪，接上回调
+            if self._feature_extraction_service is not None:
+                service.feature_callback = (
+                    self._feature_extraction_service.process_feature_packet
+                )
+                print("[UnifiedDataManager] 预处理→特征提取回调已接上（预处理侧）")
+
             print("[UnifiedDataManager] 真实预处理后端已初始化")
             return True
         except ImportError as e:
@@ -762,6 +770,9 @@ class UnifiedDataManager:
             self._state_estimation_service = service
             self._state_estimation_source = DataSource.REAL
 
+            # 特征提取模块作为可选中间层，依赖缺失时状态估计仍可运行
+            self._init_feature_extraction(service)
+
             print("[UnifiedDataManager] 真实状态估计后端已初始化")
             return True
         except ImportError as e:
@@ -770,6 +781,31 @@ class UnifiedDataManager:
         except Exception as e:
             print(f"[UnifiedDataManager] 状态估计模块初始化失败: {e}")
             return False
+
+    def _init_feature_extraction(self, se_service) -> None:
+        """尝试初始化特征提取模块并接入状态估计（可选，依赖缺失时降级）"""
+        try:
+            from ..feature_extraction.service import FeatureExtractionService
+
+            fe_service = FeatureExtractionService(
+                state_callback=se_service.on_features_extracted,
+                log_callback=lambda msg: print(f"[FeatureExtraction] {msg}"),
+            )
+            self._feature_extraction_service = fe_service
+            print("[UnifiedDataManager] 特征提取模块已初始化并接入状态估计")
+
+            # 若预处理后端已就绪，立即接上
+            if self._preprocessing_service is not None:
+                self._preprocessing_service.feature_callback = (
+                    fe_service.process_feature_packet
+                )
+                print("[UnifiedDataManager] 预处理→特征提取回调已接上")
+        except ImportError as e:
+            print(f"[UnifiedDataManager] 特征提取模块不可用（缺少依赖: {e}），"
+                  "状态估计将使用内部模拟数据")
+        except Exception as e:
+            print(f"[UnifiedDataManager] 特征提取模块初始化失败: {e}，"
+                  "状态估计将使用内部模拟数据")
 
     # ── 保留旧方法作为兼容（内部转发到统一入口） ──
 

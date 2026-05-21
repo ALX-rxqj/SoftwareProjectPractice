@@ -14,11 +14,11 @@ import cv2
 import numpy as np
 from types import SimpleNamespace
 
-from face_detection import FaceDetector
-from mark_detection import MarkDetector
-from pose_estimation import PoseEstimator
-from utils import refine
-from metrics import (
+from .face_detection import FaceDetector
+from .mark_detection import MarkDetector
+from .pose_estimation import PoseEstimator
+from .utils import refine
+from .metrics import (
     _build_default_output,
     _build_prompt_output,
     _estimate_attention_state,
