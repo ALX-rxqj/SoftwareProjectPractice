@@ -81,11 +81,11 @@ class DataRecordWidget(QFrame):
         layout.addLayout(header_layout)
 
         self.record_table = QTableWidget()
-        # 9 列：col 0 = 勾选框（默认隐藏），col 1~8 = 数据
-        self.record_table.setColumnCount(9)
+        # 10 列：col 0 = 勾选框（默认隐藏），col 1~9 = 数据
+        self.record_table.setColumnCount(10)
         self.record_table.setHorizontalHeaderLabels([
             "", "会话 ID", "人脸 ID", "日期", "开始时间", "结束时间",
-            "模式", "平均专注度", "异常事件",
+            "模式", "来源", "平均专注度", "异常事件",
         ])
         self.record_table.setFont(QFont(*get_font("sm", "normal", "data")))
         self.record_table.setStyleSheet(get_style("table_enhanced"))
@@ -144,12 +144,20 @@ class DataRecordWidget(QFrame):
             )
             avg_focus = session.get("avg_focus_score") or 0.0
             abnormal_count = session.get("abnormal_event_count") or 0
+            video_source_type = session.get("video_source_type", "camera")
+            file_name = session.get("file_name") or ""
 
             date_str = start_time.split(" ")[0] if " " in start_time else start_time
             time_start = start_time.split(" ")[1] if " " in start_time else start_time
             time_end = end_time.split(" ")[1] if " " in end_time else end_time
 
-            # 数据列 col 1~8
+            # 来源列显示文案
+            if video_source_type == "file":
+                source_display = f"📁 {file_name}" if file_name else "📁 本地文件"
+            else:
+                source_display = "📷 摄像头"
+
+            # 数据列 col 1~9
             items = [
                 QTableWidgetItem(session_id),
                 QTableWidgetItem(face_id),
@@ -157,6 +165,7 @@ class DataRecordWidget(QFrame):
                 QTableWidgetItem(time_start),
                 QTableWidgetItem(time_end),
                 QTableWidgetItem(mode),
+                QTableWidgetItem(source_display),
                 QTableWidgetItem(f"{avg_focus:.1f}"),
                 QTableWidgetItem(str(abnormal_count)),
             ]
@@ -167,7 +176,7 @@ class DataRecordWidget(QFrame):
                 item_.setTextAlignment(Qt.AlignCenter)
                 self.record_table.setItem(row, col, item_)
 
-            focus_item = self.record_table.item(row, 7)
+            focus_item = self.record_table.item(row, 8)
             if avg_focus >= 70:
                 focus_item.setForeground(QColor(COLORS["focus_high"]))
             elif avg_focus < 50:

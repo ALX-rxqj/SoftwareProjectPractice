@@ -6,6 +6,7 @@ from PyQt5.QtCore import (
 from PyQt5.QtGui import QPixmap, QImage, QFont, QPainter, QPen, QColor
 from PyQt5.QtWidgets import (
     QFrame, QVBoxLayout, QLabel, QHBoxLayout, QGraphicsOpacityEffect,
+    QSlider, QWidget,
 )
 
 from .styles import COLORS, FONTS, SIZES, get_style, get_font, get_spacing
@@ -323,7 +324,44 @@ class VideoWidget(QFrame):
         self.video_label.setText("等待预处理模块接入...")
         self.video_label.setFont(QFont(*get_font("base", "normal", "ui")))
         self.video_label.setStyleSheet(get_style("video_placeholder"))
-        layout.addWidget(self.video_label)
+        layout.addWidget(self.video_label, 1)
+
+        # ---- 文件播放进度条（默认隐藏） ----
+        self._progress_container = QWidget()
+        self._progress_container.setFixedHeight(36)
+        progress_layout = QHBoxLayout(self._progress_container)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        progress_layout.setSpacing(get_spacing("sm"))
+
+        self._progress_label = QLabel("")
+        self._progress_label.setFont(QFont(*get_font("xs", "normal", "data")))
+        self._progress_label.setStyleSheet(f"color: {COLORS['text_hint']};")
+        self._progress_label.setFixedWidth(100)
+
+        self._progress_slider = QSlider(Qt.Horizontal)
+        self._progress_slider.setEnabled(False)  # 只读，不可拖动
+        self._progress_slider.setFixedHeight(20)
+        self._progress_slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                background: {COLORS['card_hover']};
+                height: 4px;
+                border-radius: 2px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {COLORS['accent']};
+                border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                background: transparent;
+                border: none;
+                width: 0px;
+            }}
+        """)
+
+        progress_layout.addWidget(self._progress_slider)
+        progress_layout.addWidget(self._progress_label)
+        self._progress_container.setVisible(False)
+        layout.addWidget(self._progress_container)
 
 
 
@@ -363,9 +401,33 @@ class VideoWidget(QFrame):
         self._current_face_boxes = []
         self.video_label.setText("等待预处理模块接入...")
         self.video_label.setStyleSheet(get_style("video_placeholder"))
+        self.hide_progress_bar()
 
     def set_preprocessing_callback(self, callback):
         pass
+
+    def show_progress_bar(self):
+        """显示进度条（文件模式）"""
+        self._progress_container.setVisible(True)
+
+    def hide_progress_bar(self):
+        """隐藏进度条（摄像头模式）"""
+        self._progress_container.setVisible(False)
+        self._progress_slider.setValue(0)
+        self._progress_label.setText("")
+
+    def update_progress(self, current_frame: int, total_frames: int):
+        """更新进度条位置和文字
+
+        Args:
+            current_frame: 当前帧序号
+            total_frames: 总帧数
+        """
+        if total_frames <= 0:
+            return
+        percentage = int(current_frame / total_frames * 100)
+        self._progress_slider.setValue(percentage)
+        self._progress_label.setText(f"{current_frame}/{total_frames}")
 
 
 class _LoadingOverlay(QFrame):

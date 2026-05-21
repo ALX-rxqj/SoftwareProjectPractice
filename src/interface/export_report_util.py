@@ -134,6 +134,12 @@ def export_to_excel(session: dict, records: list, alerts: list, filepath: str):
     mode = mode_map.get(session.get("mode", ""), session.get("mode", ""))
     avg_focus = session.get("avg_focus_score", 0)
     abnormal_count = session.get("abnormal_event_count", 0)
+    video_source_type = session.get("video_source_type", "camera")
+    file_name = session.get("file_name") or ""
+    if video_source_type == "file":
+        source_display = f"本地文件 — {file_name}" if file_name else "本地文件"
+    else:
+        source_display = "摄像头"
     date_str = start_time.split(" ")[0] if " " in start_time else start_time
     time_start = start_time.split(" ")[1] if " " in start_time else start_time
     time_end = end_time.split(" ")[1] if " " in end_time else end_time
@@ -144,6 +150,7 @@ def export_to_excel(session: dict, records: list, alerts: list, filepath: str):
         ("开始时间", time_start),
         ("结束时间", time_end),
         ("模式", mode),
+        ("视频来源", source_display),
         ("平均专注度", f"{avg_focus:.1f}"),
         ("异常事件数", str(abnormal_count)),
         ("专注度采样点数", str(len(records))),
@@ -281,6 +288,12 @@ def export_to_pdf(session: dict, records: list, alerts: list, filepath: str):
     mode = mode_map.get(session.get("mode", ""), session.get("mode", ""))
     avg_focus = session.get("avg_focus_score", 0)
     abnormal_count = session.get("abnormal_event_count", 0)
+    video_source_type = session.get("video_source_type", "camera")
+    file_name = session.get("file_name") or ""
+    if video_source_type == "file":
+        source_display = f"本地文件 — {file_name}" if file_name else "本地文件"
+    else:
+        source_display = "摄像头"
 
     elements = []
 
@@ -302,6 +315,7 @@ def export_to_pdf(session: dict, records: list, alerts: list, filepath: str):
         ["开始时间", start_time.split(" ")[1] if " " in start_time else start_time],
         ["结束时间", end_time.split(" ")[1] if " " in end_time else end_time],
         ["模式", mode],
+        ["视频来源", source_display],
         ["平均专注度", f"{avg_focus:.1f}"],
         ["异常事件数", str(abnormal_count)],
         ["专注度采样点数", str(len(records))],

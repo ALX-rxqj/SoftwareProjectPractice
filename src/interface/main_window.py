@@ -1,3 +1,5 @@
+from typing import Optional
+
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QStackedLayout, QSplitter, QMenu, QFileDialog, QMessageBox, QApplication
 
@@ -28,6 +30,8 @@ class MainWindow(QMainWindow):
         self.current_mode = "class"
         self.current_face_id = None
         self.current_device_id = 0
+        self._current_source_type = "camera"  # "camera" 或 "file"
+        self._current_file_path: Optional[str] = None
         self._init_poll_timer = None
         self.init_ui()
         self.toast_widget = ToastWidget(anchor=self.video_widget)
@@ -61,6 +65,10 @@ class MainWindow(QMainWindow):
         # 注册数据分发回调：MainWindow 作为数据中转中心
         unified_data_manager.register_video_frame_callback(self._on_video_frame_for_display)
         unified_data_manager.register_focus_result_callback(self._on_focus_result_for_display)
+
+        # 注册文件播放完成回调
+        from .interface_manager import interface_manager
+        interface_manager.register_file_playback_ended_callback(self._on_file_playback_ended)
 
         if need_loading_label:
             self._init_poll_timer = QTimer()
@@ -214,6 +222,7 @@ class MainWindow(QMainWindow):
         self.left_sidebar.face_selected.connect(self.on_face_selected)
         self.left_sidebar.face_delete_requested.connect(self.on_delete_face)
         self.left_sidebar.show_bbox_toggled.connect(self.video_widget.set_show_face_boxes)
+        self.left_sidebar.file_selected.connect(self.on_file_selected)
         self.video_widget.frame_updated.connect(self.on_video_frame_updated)
         self.top_nav.register_face_clicked.connect(self.on_register_face_clicked)
         self.top_nav_query.register_face_clicked.connect(self.on_register_face_clicked)
@@ -238,6 +247,13 @@ class MainWindow(QMainWindow):
     def _on_video_frame_for_display(self, data: VideoFrameData):
         """UIM 视频帧回调 → 分发给 VideoWidget"""
         self.video_widget.render_frame(data)
+
+        # 文件模式：更新进度条
+        if data.frame_progress:
+            self.video_widget.update_progress(
+                data.frame_progress.get("current_frame", 0),
+                data.frame_progress.get("total_frames", 0),
+            )
 
     def _on_focus_result_for_display(self, data: FocusResultData):
         """UIM 专注度结果回调 → 分发给 RightPanel"""
@@ -339,20 +355,39 @@ class MainWindow(QMainWindow):
             self.current_face_id = face_id
         monitored_faces = [face_id] if face_id else []
 
-        print(f"[MainWindow] 监控人脸: {monitored_faces}")
-        result = unified_data_manager.toggle_capture(
-            device_id=self.current_device_id, start=True,
-            monitored_faces=monitored_faces,
-        )
-        print(f"[MainWindow] 摄像头控制结果: {result}")
+        import os
+        file_name = os.path.basename(self._current_file_path) if self._current_file_path else None
 
-        session_result = unified_data_manager.toggle_analysis(start=True, face_id=face_id)
+        # 根据视频源类型分发启动命令
+        if self._current_source_type == "file":
+            print(f"[MainWindow] 文件模式: {self._current_file_path}")
+            result = unified_data_manager.load_video_file(self._current_file_path)
+            print(f"[MainWindow] 视频文件加载结果: {result}")
+        else:
+            print(f"[MainWindow] 摄像头模式: device_id={self.current_device_id}, "
+                  f"监控人脸: {monitored_faces}")
+            result = unified_data_manager.toggle_capture(
+                device_id=self.current_device_id, start=True,
+                monitored_faces=monitored_faces,
+            )
+            print(f"[MainWindow] 摄像头控制结果: {result}")
+
+        session_result = unified_data_manager.toggle_analysis(
+            start=True, face_id=face_id,
+            video_source_type=self._current_source_type,
+            file_name=file_name if self._current_source_type == "file" else None,
+        )
         if session_result and "session_id" in session_result:
             print(f"[MainWindow] 创建会话成功: {session_result['session_id']}")
 
         unified_data_manager.switch_mode(self.current_mode)
 
         self.video_widget.start_processing()
+
+        # 文件模式：显示进度条
+        if self._current_source_type == "file":
+            self.video_widget.show_progress_bar()
+
         self.top_nav.set_recording(True)
         self.top_nav_query.set_recording(True)
         self.top_nav.set_mode_buttons_enabled(False)
@@ -364,12 +399,16 @@ class MainWindow(QMainWindow):
         self.toast_widget.dismiss()
         self.video_widget.stop_processing()
 
-        result = unified_data_manager.toggle_capture(device_id=self.current_device_id, start=False)
-        print(f"[MainWindow] 摄像头控制结果: {result}")
+        # 统一停止命令
+        result = unified_data_manager.stop_capture()
+        print(f"[MainWindow] 停止采集结果: {result}")
 
         session_result = unified_data_manager.toggle_analysis(start=False)
         if session_result and "session_id" in session_result:
             print(f"[MainWindow] 结束会话成功: {session_result['session_id']}")
+
+        # 重置视频源类型
+        self._current_source_type = "camera"
 
         self.top_nav.set_recording(False)
         self.top_nav_query.set_recording(False)
@@ -382,6 +421,18 @@ class MainWindow(QMainWindow):
         """用户选择摄像头"""
         print(f"[MainWindow] 用户选择摄像头: {device_id}")
         self.current_device_id = device_id
+        self._current_source_type = "camera"
+
+    def on_file_selected(self, file_path: str):
+        """用户选择本地文件"""
+        print(f"[MainWindow] 用户选择本地文件: {file_path}")
+        self._current_file_path = file_path
+        self._current_source_type = "file"
+
+    def _on_file_playback_ended(self, file_path: str):
+        """文件播放完成回调 — 自动执行停止 session 流程"""
+        print(f"[MainWindow] 文件播放完成，自动停止: {file_path}")
+        self.on_stop_analysis()
 
     def on_refresh_camera_list(self):
         """刷新摄像头列表"""
