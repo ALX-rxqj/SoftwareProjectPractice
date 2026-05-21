@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import threading
 import time
 from pathlib import Path
@@ -62,6 +63,8 @@ class PreprocessingService:
         self._registration_detector: Optional[FaceDetector] = None
         self._match_threshold = 0.6
         self._last_owner_face_id: Any = -1
+        self._playback_rate = 1.0
+        self._file_playback_started_at: Optional[float] = None
         self._initialize_database_backend()
         self._progress_callback("初始化数据库...", 0.9)
         self._progress_callback("预处理模块就绪", 1.0)
@@ -125,6 +128,7 @@ class PreprocessingService:
         if self._worker and self._worker.is_alive():
             self._worker.join(timeout=2.0)
         self._worker = None
+        self._file_playback_started_at = None
         self.video_source.close()
         self._active_source = None
         self.pipeline.stats.source_opened = False
@@ -242,33 +246,45 @@ class PreprocessingService:
     def _start_worker(self) -> None:
         self._stop_event.clear()
         self.pipeline.reset()
+        self._file_playback_started_at = None
         self._worker = threading.Thread(target=self._run_loop, name="PreprocessingWorker", daemon=True)
         self._worker.start()
 
     def _run_loop(self) -> None:
         while not self._stop_event.is_set():
+            self._prepare_file_read_timing()
             context = self.video_source.read()
             if context is None:
                 time.sleep(0.02)
                 if self._active_source and self._active_source.get("type") == "file":
+                    if self.video_source.reached_end:
+                        self._emit_file_playback_ended()
                     break
                 continue
 
+            frame_started_at = time.perf_counter()
             result = self.pipeline.process(context)
             if result is None:
+                self._pace_file_playback(context, frame_started_at)
                 continue
 
             matched_faces = self._match_faces(result["tracked_faces"])
             owner_face_id, owner_face_matched = self._select_owner_face(
                 matched_faces, result["frame"].shape, has_registered_faces=bool(self._face_registry)
             )
-            ui_packet = self._build_ui_packet(result["frame"], result["timestamp"], matched_faces).to_dict()
+            ui_packet = self._build_ui_packet(
+                result["frame"],
+                result["timestamp"],
+                matched_faces,
+                context=context,
+            ).to_dict()
             feature_packet = self._build_feature_packet(
                 result["frame"], result["timestamp"], matched_faces, owner_face_id, owner_face_matched
             ).to_dict()
             self._log_recognition_result(feature_packet)
             self._dispatch_ui_packet(ui_packet)
             self._dispatch_feature_packet(feature_packet)
+            self._pace_file_playback(context, frame_started_at)
 
         self.video_source.close()
 
@@ -276,7 +292,20 @@ class PreprocessingService:
         if self.ui_callback is not None:
             self.ui_callback(ui_packet)
         if self.video_frame_callback is not None:
-            self.video_frame_callback(ui_packet["frame"], ui_packet["faces"], ui_packet["timestamp"])
+            frame_progress = ui_packet.get("frame_progress")
+            if self._callback_accepts_frame_progress(self.video_frame_callback):
+                self.video_frame_callback(
+                    ui_packet["frame"],
+                    ui_packet["faces"],
+                    ui_packet["timestamp"],
+                    frame_progress,
+                )
+            else:
+                self.video_frame_callback(
+                    ui_packet["frame"],
+                    ui_packet["faces"],
+                    ui_packet["timestamp"],
+                )
 
     def _dispatch_feature_packet(self, feature_packet: Dict[str, Any]) -> None:
         if self.feature_callback is not None:
@@ -549,7 +578,11 @@ class PreprocessingService:
         return (best.face_id, best.face_matched) if best is not None else (-1, False)
 
     def _build_ui_packet(
-        self, frame: np.ndarray, timestamp: float, faces: Sequence[MatchedFace]
+        self,
+        frame: np.ndarray,
+        timestamp: float,
+        faces: Sequence[MatchedFace],
+        context: Optional[Any] = None,
     ) -> UIFramePacket:
         ui_faces = [
             {
@@ -560,7 +593,18 @@ class PreprocessingService:
             }
             for face in faces
         ]
-        return UIFramePacket(frame=frame, faces=ui_faces, timestamp=timestamp)
+        frame_progress = None
+        if context is not None and context.total_frames > 0:
+            frame_progress = {
+                "current_frame": int(context.frame_index),
+                "total_frames": int(context.total_frames),
+            }
+        return UIFramePacket(
+            frame=frame,
+            faces=ui_faces,
+            timestamp=timestamp,
+            frame_progress=frame_progress,
+        )
 
     def _build_feature_packet(
         self,
@@ -587,6 +631,76 @@ class PreprocessingService:
             frame=frame,
             face_matched=owner_face_matched,
         )
+
+    def _emit_file_playback_ended(self) -> None:
+        file_path = ""
+        if self._active_source and self._active_source.get("type") == "file":
+            file_path = str(self._active_source.get("file_path", ""))
+        if not file_path:
+            file_path = self.video_source.file_path or ""
+        if self.ui_callback is not None:
+            self.ui_callback({"type": "file_playback_ended", "file_path": file_path})
+
+    @staticmethod
+    def _callback_accepts_frame_progress(callback: Callable[..., Any]) -> bool:
+        try:
+            signature = inspect.signature(callback)
+        except (TypeError, ValueError):
+            return False
+        params = list(signature.parameters.values())
+        if any(param.kind == inspect.Parameter.VAR_POSITIONAL for param in params):
+            return True
+        positional_params = [
+            param for param in params
+            if param.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        ]
+        return len(positional_params) >= 4
+
+    def _prepare_file_read_timing(self) -> None:
+        if not self._is_file_source_active():
+            return
+        fps = self._effective_file_fps()
+        if fps <= 0:
+            return
+        if self._file_playback_started_at is None:
+            self._file_playback_started_at = time.perf_counter()
+            return
+        expected_next_frame = int(
+            max(0.0, time.perf_counter() - self._file_playback_started_at)
+            * fps
+            * self._playback_rate
+        ) + 1
+        if expected_next_frame > self.video_source.frame_index + 1:
+            self.video_source.skip_to_frame(expected_next_frame)
+
+    def _pace_file_playback(self, context: Any, frame_started_at: float) -> None:
+        if not self._is_file_source_active():
+            return
+        fps = self._effective_file_fps(context.fps)
+        if fps <= 0:
+            return
+        if self._file_playback_started_at is None:
+            self._file_playback_started_at = frame_started_at
+        frame_interval = 1.0 / max(fps * self._playback_rate, 1e-6)
+        target_time = self._file_playback_started_at + max(0, context.frame_index - 1) * frame_interval
+        now = time.perf_counter()
+        remaining = target_time - now
+        if remaining > 0:
+            time.sleep(remaining)
+            return
+        lag_frames = int(abs(remaining) // frame_interval)
+        if lag_frames >= 1:
+            self.video_source.skip_to_frame(context.frame_index + lag_frames + 1)
+
+    def _effective_file_fps(self, fps: Optional[float] = None) -> float:
+        value = float(fps if fps is not None else self.video_source.fps)
+        return value if value > 1e-3 else 25.0
+
+    def _is_file_source_active(self) -> bool:
+        return bool(self._active_source and self._active_source.get("type") == "file")
 
 
 class PreprocessingCommandAdapter:

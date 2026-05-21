@@ -28,12 +28,60 @@ class PipelineConfig:
     min_face_size: int = 40
     max_failure_count: int = 10
     owner_smoothing: float = 0.2
+    enable_illumination_normalization: bool = True
+    clahe_clip_limit: float = 2.0
+    clahe_tile_grid_size: Tuple[int, int] = (8, 8)
+    target_brightness: float = 128.0
+    min_gamma: float = 0.75
+    max_gamma: float = 1.35
+
+
+class IlluminationNormalizer:
+    def __init__(self, config: PipelineConfig):
+        self._enabled = config.enable_illumination_normalization
+        self._target_brightness = float(config.target_brightness)
+        self._min_gamma = float(config.min_gamma)
+        self._max_gamma = float(config.max_gamma)
+        self._clahe = cv2.createCLAHE(
+            clipLimit=float(config.clahe_clip_limit),
+            tileGridSize=tuple(config.clahe_tile_grid_size),
+        )
+
+    def apply(self, frame: np.ndarray) -> np.ndarray:
+        if not self._enabled or frame is None or frame.size == 0:
+            return frame
+
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        l_channel, a_channel, b_channel = cv2.split(lab)
+        l_channel = self._clahe.apply(l_channel)
+        balanced = cv2.cvtColor(
+            cv2.merge((l_channel, a_channel, b_channel)),
+            cv2.COLOR_LAB2BGR,
+        )
+        return self._apply_gamma_balance(balanced)
+
+    def _apply_gamma_balance(self, frame: np.ndarray) -> np.ndarray:
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        h_channel, s_channel, v_channel = cv2.split(hsv)
+        brightness = float(v_channel.mean())
+        if brightness <= 1.0:
+            return frame
+
+        gain = self._target_brightness / max(brightness, 1.0)
+        gain = float(np.clip(gain, self._min_gamma, self._max_gamma))
+        corrected_v = np.clip(v_channel.astype(np.float32) * gain, 0, 255).astype(np.uint8)
+        return cv2.cvtColor(
+            cv2.merge((h_channel, s_channel, corrected_v)),
+            cv2.COLOR_HSV2BGR,
+        )
 
 
 class FaceDetector:
-    def __init__(self, min_face_size: int, yolo_model_path: str | Path = "weights/yolov8-face.pt",
+    def __init__(self, min_face_size: int, roi_normalizer: Optional[IlluminationNormalizer] = None,
+                 yolo_model_path: str | Path = "weights/yolov8-face.pt",
                  yolo_model: Any = None, mtcnn: Any = None):
         self.min_face_size = min_face_size
+        self._roi_normalizer = roi_normalizer
         if yolo_model is not None:
             self._yolo = yolo_model
         else:
@@ -85,7 +133,7 @@ class FaceDetector:
             if min(w, h) < self.min_face_size:
                 continue
             bbox = self._clip_bbox((x1, y1, w, h), frame.shape)
-            face_roi = self._extract_roi(frame, bbox, roi_size)
+            face_roi = self._extract_roi(frame, bbox, roi_size, self._roi_normalizer)
             detections.append(
                 DetectionResult(
                     bbox=bbox,
@@ -104,7 +152,7 @@ class FaceDetector:
             if min(w, h) < self.min_face_size:
                 continue
             bbox = self._clip_bbox((x, y, w, h), frame.shape)
-            face_roi = self._extract_roi(frame, bbox, roi_size)
+            face_roi = self._extract_roi(frame, bbox, roi_size, self._roi_normalizer)
             detections.append(
                 DetectionResult(
                     bbox=bbox,
@@ -120,7 +168,7 @@ class FaceDetector:
         detections: List[DetectionResult] = []
         for x, y, w, h in faces:
             bbox = self._clip_bbox((int(x), int(y), int(w), int(h)), frame.shape)
-            face_roi = self._extract_roi(frame, bbox, roi_size)
+            face_roi = self._extract_roi(frame, bbox, roi_size, self._roi_normalizer)
             detections.append(DetectionResult(bbox=bbox, confidence=0.6, face_roi=face_roi))
         return detections
 
@@ -135,12 +183,20 @@ class FaceDetector:
         return x, y, w, h
 
     @staticmethod
-    def _extract_roi(frame: np.ndarray, bbox: Tuple[int, int, int, int], roi_size: Tuple[int, int]) -> np.ndarray:
+    def _extract_roi(
+        frame: np.ndarray,
+        bbox: Tuple[int, int, int, int],
+        roi_size: Tuple[int, int],
+        roi_normalizer: Optional[IlluminationNormalizer] = None,
+    ) -> np.ndarray:
         x, y, w, h = bbox
         roi = frame[y:y + h, x:x + w]
         if roi.size == 0:
             return np.empty((0, 0, 3), dtype=frame.dtype)
-        return cv2.resize(roi, roi_size)
+        roi = cv2.resize(roi, roi_size)
+        if roi_normalizer is not None:
+            roi = roi_normalizer.apply(roi)
+        return roi
 
 
 class PreprocessingPipeline:
@@ -148,7 +204,11 @@ class PreprocessingPipeline:
         self.config = config or PipelineConfig()
         self.logger = logger or (lambda message: None)
         self.stats = PreprocessingStats()
-        self._detector = FaceDetector(self.config.min_face_size)
+        self._illumination_normalizer = IlluminationNormalizer(self.config)
+        self._detector = FaceDetector(
+            self.config.min_face_size,
+            roi_normalizer=self._illumination_normalizer,
+        )
         self._tracker = SimpleFaceTracker()
         self._liveness = HeuristicLivenessDetector()
         self._owner_face_id = -1
@@ -195,6 +255,7 @@ class PreprocessingPipeline:
         normalized = cv2.resize(frame, self.config.frame_size)
         if normalized.ndim == 2:
             normalized = cv2.cvtColor(normalized, cv2.COLOR_GRAY2BGR)
+        normalized = self._illumination_normalizer.apply(normalized)
         return normalized
 
     def _apply_liveness(self, tracked_faces: Sequence[TrackedFace]) -> List[TrackedFace]:

@@ -46,6 +46,9 @@ class FrameContext:
     timestamp: float
     source_name: str
     frame_index: int
+    total_frames: int = 0
+    fps: float = 0.0
+    file_path: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,7 @@ class UIFramePacket:
     frame: np.ndarray
     faces: List[Dict[str, Any]]
     timestamp: float
+    frame_progress: Optional[Dict[str, int]] = None
     packet_type: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -61,6 +65,8 @@ class UIFramePacket:
             "faces": self.faces,
             "timestamp": self.timestamp,
         }
+        if self.frame_progress is not None:
+            payload["frame_progress"] = self.frame_progress
         if self.packet_type:
             payload["type"] = self.packet_type
         return payload
