@@ -5,7 +5,6 @@
 当前版本会从摄像头或视频中检测人脸，并输出以下信息：
 
 - `head_pose`：头部姿态（`pitch` / `yaw` / `roll` / `confidence`）
-- `ear`：眼睛纵横比（EAR）
 - `eye_state`：是否睁眼（`0 = 睁眼`，`1 = 闭眼`）
 - `is_looking_screen`：是否看着屏幕
 - `num_face_total`：当前画面中的人脸数量
@@ -64,14 +63,51 @@ python main.py --video "D:\test.mp4" --face-id 1
 
 - `Pitch / Yaw / Roll`
 - `头部姿态置信度`
-- `EAR`
 - `Eye: Open / Closed`
 - `Look: Looking / Not looking`
 - `Faces: 当前人脸数量`
 - `FPS`
 
+## 接口使用
 
-output = process_feature_packet(input_data)
+### 使用 IOInterface 处理单条记录
+
+```python
+from io_interface import IOInterface
+
+io = IOInterface()
+
+# 准备输入数据
+record = {
+    "timestamp": 1734567890.123,
+    "faces": [
+        {
+            "face_id": "face_xxx",
+            "student_name": "Alice",
+            "face_roi": face_img,
+            "confidence": 0.91,
+            "face_matched": True
+        }
+    ],
+    "owner_face_id": "face_xxx",
+    "frame": frame,
+    "face_matched": True
+}
+
+# 处理并回调
+def send_to_scoring(output):
+    print(output)
+
+io.process(record, send_to_scoring)
+```
+
+### 批量处理
+
+```python
+from io_interface import process_batch, IOInterface
+
+records = [record1, record2, record3]
+process_batch(records, send_to_scoring)
 ```
 
 输入字典需要符合结构：
@@ -80,19 +116,21 @@ output = process_feature_packet(input_data)
 {
     "timestamp": float,
     "faces": [
-        {"face_id": 1, "face_roi": face_img1},
-        {"face_id": 2, "face_roi": face_img2}
+        {"face_id": "face_xxx", "student_name": "Alice", "face_roi": face_img1, "confidence": 0.91, "face_matched": True},
+        {"face_id": "face_yyy", "student_name": "Bob", "face_roi": face_img2, "confidence": 0.85, "face_matched": False}
     ],
-    "owner_face_id": 1,
-    "frame": frame
+    "owner_face_id": "face_xxx",
+    "frame": frame,
+    "face_matched": True
 }
 ```
 
 其中：
 
-- `faces` 是所有人脸信息，每项至少包含 `face_id` 和 `face_roi`
-- `owner_face_id` 是主人脸 ID，`-1` 表示没有主人脸
+- `faces` 是所有人脸信息，每项包含 `face_id`、`student_name`、`face_roi`、`confidence` 和 `face_matched`
+- `owner_face_id` 是主人脸 ID
 - `frame` 是原始视频帧（BGR）
+- `face_matched` 是顶层人脸匹配状态（转发字段，无需处理）
 
 `process_feature_packet` 会返回完整输出字典，并且支持把结果回调到 `send_to_scoring(output)`。
 
@@ -109,18 +147,13 @@ send_to_scoring(output)
 ```python
 {
     "timestamp": float,
-    "face_id": int,
+    "face_id": str,
+    "face_matched": bool,
     "features": {
         "head_pose": {
             "pitch": float,
             "yaw": float,
             "roll": float,
-            "confidence": float
-        },
-        "ear": {
-            "left": float,
-            "right": float,
-            "value": float,
             "confidence": float
         },
         "eye_state": {
@@ -160,13 +193,6 @@ send_to_scoring(output)
 - `roll`：滚转角
 - `confidence`：头部姿态置信度，范围为 0 到 1
 
-### `ear`
-
-- `left`：左眼 EAR
-- `right`：右眼 EAR
-- `value`：左右眼 EAR 平均值
-- `confidence`：眼睛状态相关置信度，范围为 0 到 1
-
 ### `eye_state`
 
 - `0`：睁眼
@@ -201,6 +227,13 @@ send_to_scoring(output)
 
 表示当前画面检测到的人脸总数。
 
+### `face_matched`
+
+人脸匹配状态，直接从输入转发，不做处理。
+
+- `True`：人脸匹配
+- `False`：人脸不匹配
+
 ## 常见问题
 
 ### 1. 闭眼却仍然显示睁眼
@@ -210,6 +243,8 @@ send_to_scoring(output)
 ### 2. `Looking / Not looking` 判断不准
 
 这是基于头部姿态的启发式判断，不是严格的眼球视线跟踪。如果需要更高精度，可以后续增加专门的 gaze 模型。
+
+## 项目报告：特征提取模块与接口对接
 
 ### 3. 摄像头打不开
 

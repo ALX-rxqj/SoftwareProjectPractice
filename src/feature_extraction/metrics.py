@@ -145,10 +145,11 @@ def _estimate_yawning_state(marks, threshold=0.2, margin=0.20):
     return {"value": value, "confidence": confidence}
 
 
-def _build_default_output(face_id):
+def _build_default_output(face_id, face_matched=None):
     return {
         "timestamp": time.time(),
-        "face_id": int(face_id),
+        "face_id": face_id,
+        "face_matched": face_matched if face_matched is not None else False,
         "features": {
             "head_pose": {
                 "pitch": 0.0,
@@ -167,10 +168,11 @@ def _build_default_output(face_id):
 
 
 def _build_prompt_output(timestamp, face_id, head_pose, eye_state, is_looking_screen, attention_state,
-                         face_distance_state, is_yawning, num_face_total):
+                         face_distance_state, is_yawning, num_face_total, face_matched=None):
     return {
         "timestamp": float(timestamp),
-        "face_id": int(face_id),
+        "face_id": face_id,
+        "face_matched": face_matched if face_matched is not None else False,
         "features": {
             "head_pose": head_pose,
             "eye_state": eye_state,
