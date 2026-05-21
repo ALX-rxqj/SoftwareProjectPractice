@@ -612,20 +612,38 @@ class StateEstimationService:
         face_matched = bool(feature_output.get("face_matched", False))
         features = feature_output.get("features", {}) if isinstance(feature_output, dict) else {}
 
-        # 将输出字典转换为内部 FeatureData
+        head_pose = features.get("head_pose", {})
+        eye_state = features.get("eye_state", {})
+        is_looking_screen = features.get("is_looking_screen", {})
+        attention_state = features.get("attention_state", {})
+        face_distance_state = features.get("face_distance_state", {})
+        is_yawning = features.get("is_yawning", {})
+        num_face_total = features.get("num_face_total", {"value": 1, "confidence": 1.0})
+
+        self._log(f"[DEBUG-FEI-01] 收到特征提取数据:")
+        self._log(f"  ├─ timestamp: {timestamp:.3f}")
+        self._log(f"  ├─ face_id: {face_id}")
+        self._log(f"  ├─ face_matched: {face_matched}")
+        self._log(f"  ├─ head_pose: pitch={head_pose.get('pitch', 0):.2f}, yaw={head_pose.get('yaw', 0):.2f}, roll={head_pose.get('roll', 0):.2f}, conf={head_pose.get('confidence', 0):.2f}")
+        self._log(f"  ├─ eye_state: value={eye_state.get('value', 0)}, conf={eye_state.get('confidence', 0):.2f}")
+        self._log(f"  ├─ is_looking_screen: value={is_looking_screen.get('value', False)}, conf={is_looking_screen.get('confidence', 0):.2f}")
+        self._log(f"  ├─ attention_state: value={attention_state.get('value', 0)}, conf={attention_state.get('confidence', 0):.2f}")
+        self._log(f"  ├─ face_distance_state: value={face_distance_state.get('value', 0)}, conf={face_distance_state.get('confidence', 0):.2f}")
+        self._log(f"  ├─ is_yawning: value={is_yawning.get('value', False)}, conf={is_yawning.get('confidence', 0):.2f}")
+        self._log(f"  └─ num_face_total: value={num_face_total.get('value', 1)}, conf={num_face_total.get('confidence', 0):.2f}")
+
         feature_data = FeatureData(
             timestamp=timestamp,
             face_id=face_id,
-            head_pose=features.get("head_pose", {}),
-            eye_state=features.get("eye_state", {}),
-            is_looking_screen=features.get("is_looking_screen", {}),
-            attention_state=features.get("attention_state", {}),
-            face_distance_state=features.get("face_distance_state", {}),
-            is_yawning=features.get("is_yawning", {}),
-            num_face_total=features.get("num_face_total", {"value": 1, "confidence": 1.0}),
+            head_pose=head_pose,
+            eye_state=eye_state,
+            is_looking_screen=is_looking_screen,
+            attention_state=attention_state,
+            face_distance_state=face_distance_state,
+            is_yawning=is_yawning,
+            num_face_total=num_face_total,
             face_matched=face_matched,
         )
-        # 进入统一的评分处理管线
         self.on_feature_received(feature_data)
 
     def on_feature_received(self, feature_data: FeatureData):
@@ -645,13 +663,10 @@ class StateEstimationService:
         if not self._is_processing:
             return
 
-        # 计算专注度评分
         session_id = self._session_manager.current_session_id or "unknown"
 
-        # 使用评估器计算评分（人数从 feature_data.num_face_total 提取）
         scores, is_force_zero, is_over_threshold, warn_candidates = self._estimator.estimate(feature_data)
 
-        # 构建专注度结果
         result = FocusResultData(
             timestamp=feature_data.timestamp,
             session_id=session_id,
@@ -666,14 +681,26 @@ class StateEstimationService:
             warn_candidates=warn_candidates,
         )
 
-        # 降采样：窗口满时才输出，否则缓存
+        self._log(f"[DEBUG-SE-01] 专注度评分结果:")
+        self._log(f"  ├─ session_id: {session_id}")
+        self._log(f"  ├─ timestamp: {feature_data.timestamp:.3f}")
+        self._log(f"  ├─ 各维度评分:")
+        self._log(f"  │   ├─ head_pose: {scores.get('head_pose', 0.0):.1f}")
+        self._log(f"  │   ├─ behavior: {scores.get('behavior', 0.0):.1f}")
+        self._log(f"  │   ├─ expression: {scores.get('expression', 0.0):.1f}")
+        self._log(f"  │   ├─ evidence: {scores.get('evidence', 0.0):.1f}")
+        self._log(f"  │   ├─ people: {scores.get('people', 0.0):.1f}")
+        self._log(f"  │   └─ final_focus: {scores.get('final_focus', 0.0):.1f}")
+        self._log(f"  ├─ is_force_zero: {is_force_zero}")
+        self._log(f"  ├─ is_over_threshold: {is_over_threshold}")
+        self._log(f"  └─ 告警候选({len(warn_candidates)}): {[w.warn_type for w in warn_candidates]}")
+
         downsampled = self._downsampler.add_frame(result)
         if downsampled is not None:
+            self._log(f"[DEBUG-SE-02] 降采样输出 (窗口满): final_focus={downsampled.final_focus_score:.1f}")
             self._dispatch_focus_result(downsampled)
-            # UI/DB 共用同一输出帧
             self._db_buffer.append(downsampled.to_dict())
 
-        # 更新会话统计（所有帧都统计，不经过降采样）
         if session_id:
             self._session_manager.update_session_stats(
                 session_id,
