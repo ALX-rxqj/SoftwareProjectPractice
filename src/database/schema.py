@@ -20,6 +20,8 @@ class SessionRecord:
     end_time: Optional[float] = None
     avg_focus_score: Optional[float] = None
     abnormal_event_count: int = 0
+    video_source_type: str = "camera"
+    file_name: Optional[str] = None
 
 
 # ============================================================
@@ -80,7 +82,7 @@ class SchemaManager:
     """数据库 Schema 版本管理器（单例）"""
 
     _instance: Optional["SchemaManager"] = None
-    CURRENT_VERSION: int = 4
+    CURRENT_VERSION: int = 5
 
     _DDL = {
         1: [
@@ -197,7 +199,11 @@ class SchemaManager:
         ],
         4: [
             "ALTER TABLE focus_records ADD COLUMN is_over_threshold INTEGER DEFAULT 0",
-        ]
+        ],
+        5: [
+            "ALTER TABLE sessions ADD COLUMN video_source_type TEXT NOT NULL DEFAULT 'camera'",
+            "ALTER TABLE sessions ADD COLUMN file_name TEXT DEFAULT NULL",
+        ],
     }
 
     def __new__(cls) -> "SchemaManager":

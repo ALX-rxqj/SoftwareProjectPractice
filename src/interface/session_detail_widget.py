@@ -164,11 +164,19 @@ class SessionDetailWidget(QFrame):
         )
         avg_focus = session.get("avg_focus_score") or 0.0
         abnormal_count = session.get("abnormal_event_count") or 0
+        video_source_type = session.get("video_source_type", "camera")
+        file_name = session.get("file_name") or ""
+
+        if video_source_type == "file":
+            source_info = f"本地文件 — {file_name}" if file_name else "本地文件"
+        else:
+            source_info = "摄像头"
 
         self.title_label.setText(f"会话详情 - {session_id}")
         self.session_info_label.setText(
             f"人脸ID: {face_id}  |  "
             f"会话时间: {start_time} ~ {end_time}  |  模式: {mode}  |  "
+            f"视频来源: {source_info}  |  "
             f"平均专注度: {avg_focus:.1f}  |  异常事件: {abnormal_count}  |  记录数: {len(records)}"
         )
 

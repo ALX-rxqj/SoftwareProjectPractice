@@ -90,6 +90,8 @@ class PreprocessingService:
             )
         if command == "query_face_registry":
             return self.query_face_registry()
+        if command == "stop_capture":
+            return self.stop()
         if command == "delete_face":
             return self.delete_face(str(params.get("face_id", "")))
         return {"success": False, "msg": f"Unsupported command: {command}"}

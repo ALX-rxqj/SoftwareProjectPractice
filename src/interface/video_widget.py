@@ -6,6 +6,7 @@ from PyQt5.QtCore import (
 from PyQt5.QtGui import QPixmap, QImage, QFont, QPainter, QPen, QColor
 from PyQt5.QtWidgets import (
     QFrame, QVBoxLayout, QLabel, QHBoxLayout, QGraphicsOpacityEffect,
+    QSlider, QWidget,
 )
 
 from .styles import COLORS, FONTS, SIZES, get_style, get_font, get_spacing
@@ -323,9 +324,66 @@ class VideoWidget(QFrame):
         self.video_label.setText("等待预处理模块接入...")
         self.video_label.setFont(QFont(*get_font("base", "normal", "ui")))
         self.video_label.setStyleSheet(get_style("video_placeholder"))
-        layout.addWidget(self.video_label)
+        layout.addWidget(self.video_label, 1)
+
+        # ---- 文件播放进度条（默认隐藏） ----
+        self._progress_container = QWidget()
+        self._progress_container.setFixedHeight(36)
+        progress_layout = QHBoxLayout(self._progress_container)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        progress_layout.setSpacing(get_spacing("sm"))
+
+        self._progress_label = QLabel("")
+        self._progress_label.setFont(QFont(*get_font("xs", "normal", "data")))
+        self._progress_label.setStyleSheet(f"color: {COLORS['text_hint']};")
+        self._progress_label.setFixedWidth(100)
+
+        self._progress_slider = QSlider(Qt.Horizontal)
+        self._progress_slider.setEnabled(False)  # 只读，不可拖动
+        self._progress_slider.setFixedHeight(20)
+        self._progress_slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                background: {COLORS['card_hover']};
+                height: 4px;
+                border-radius: 2px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {COLORS['accent']};
+                border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                background: transparent;
+                border: none;
+                width: 0px;
+            }}
+        """)
+
+        progress_layout.addWidget(self._progress_slider)
+        progress_layout.addWidget(self._progress_label)
+        self._progress_container.setVisible(False)
+        layout.addWidget(self._progress_container)
 
 
+
+    def show_loading_overlay(self, message: str = "正在初始化模型..."):
+        if not hasattr(self, '_loading_overlay'):
+            self._loading_overlay = _LoadingOverlay(self)
+        self._loading_overlay.set_message(message)
+        self._loading_overlay.show()
+        self._loading_overlay.raise_()
+
+    def update_loading_progress(self, message: str, progress: float):
+        if hasattr(self, '_loading_overlay') and self._loading_overlay.isVisible():
+            self._loading_overlay.set_message(f"{message} ({progress:.0%})")
+
+    def hide_loading_overlay(self):
+        if hasattr(self, '_loading_overlay'):
+            self._loading_overlay.hide()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, '_loading_overlay') and self._loading_overlay.isVisible():
+            self._loading_overlay.setGeometry(self.rect())
 
     def start_processing(self):
         self.is_running = True
@@ -343,6 +401,87 @@ class VideoWidget(QFrame):
         self._current_face_boxes = []
         self.video_label.setText("等待预处理模块接入...")
         self.video_label.setStyleSheet(get_style("video_placeholder"))
+        self.hide_progress_bar()
 
     def set_preprocessing_callback(self, callback):
         pass
+
+    def show_progress_bar(self):
+        """显示进度条（文件模式）"""
+        self._progress_container.setVisible(True)
+
+    def hide_progress_bar(self):
+        """隐藏进度条（摄像头模式）"""
+        self._progress_container.setVisible(False)
+        self._progress_slider.setValue(0)
+        self._progress_label.setText("")
+
+    def update_progress(self, current_frame: int, total_frames: int):
+        """更新进度条位置和文字
+
+        Args:
+            current_frame: 当前帧序号
+            total_frames: 总帧数
+        """
+        if total_frames <= 0:
+            return
+        percentage = int(current_frame / total_frames * 100)
+        self._progress_slider.setValue(percentage)
+        self._progress_label.setText(f"{current_frame}/{total_frames}")
+
+
+class _LoadingOverlay(QFrame):
+    """视频区域半透明加载覆盖层"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"""
+            _LoadingOverlay {{
+                background-color: rgba(13, 17, 23, 0.85);
+                border-radius: {SIZES['radius']['base']}px;
+            }}
+        """)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setSpacing(16)
+
+        self._spinner = QLabel("⏳")
+        self._spinner.setAlignment(Qt.AlignCenter)
+        self._spinner.setFont(QFont(*get_font("xl", "bold", "display")))
+        self._spinner.setStyleSheet("background: transparent;")
+        layout.addWidget(self._spinner)
+
+        self._message = QLabel("正在初始化模型...")
+        self._message.setAlignment(Qt.AlignCenter)
+        self._message.setFont(QFont(*get_font("lg", "normal", "ui")))
+        self._message.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
+        layout.addWidget(self._message)
+
+        self._progress_bar = QLabel()
+        self._progress_bar.setFixedHeight(3)
+        self._progress_bar.setStyleSheet(f"""
+            background-color: {COLORS['primary']};
+            border-radius: 1px;
+        """)
+        self._progress_bar.setFixedWidth(0)
+        layout.addWidget(self._progress_bar, alignment=Qt.AlignCenter)
+
+        self.setGeometry(parent.rect())
+        self.hide()
+
+    def set_message(self, text: str):
+        self._message.setText(text)
+        # 从文本中解析进度百分比，更新进度条
+        import re
+        match = re.search(r'(\d+)%', text)
+        if match:
+            pct = int(match.group(1)) / 100.0
+        elif text.endswith(")"):
+            match = re.search(r'\((\d+)%\)', text)
+            pct = int(match.group(1)) / 100.0 if match else 0.0
+        else:
+            return  # 不更新进度条
+        self._progress_bar.setFixedWidth(int(self.parent().width() * 0.4 * pct))
+

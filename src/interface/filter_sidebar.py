@@ -40,6 +40,7 @@ class FilterSidebar(QFrame):
 
         filter_layout.addWidget(self._create_date_section())
         filter_layout.addWidget(self._create_mode_section())
+        filter_layout.addWidget(self._create_source_section())
         filter_layout.addWidget(self._create_face_id_section())
         filter_layout.addWidget(self._create_focus_section())
         filter_layout.addWidget(self._create_abnormal_section())
@@ -128,6 +129,24 @@ class FilterSidebar(QFrame):
         self.mode_combo.setStyleSheet(get_style("combo_box"))
         self.mode_combo.currentTextChanged.connect(self.on_filter_changed)
         layout.addWidget(self.mode_combo)
+        return widget
+
+    def _create_source_section(self):
+        widget = QWidget()
+        widget.setStyleSheet(get_style("filter_group_wrapper"))
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(get_spacing("tight"))
+
+        layout.addWidget(self._section_label("视频来源"))
+
+        self.source_combo = QComboBox()
+        self.source_combo.addItems(["全部来源", "摄像头", "本地文件"])
+        self._source_values = [None, "camera", "file"]
+        self.source_combo.setFont(QFont(*get_font("sm")))
+        self.source_combo.setStyleSheet(get_style("combo_box"))
+        self.source_combo.currentTextChanged.connect(self.on_filter_changed)
+        layout.addWidget(self.source_combo)
         return widget
 
     def _create_face_id_section(self):
@@ -269,6 +288,8 @@ class FilterSidebar(QFrame):
     def on_apply_clicked(self):
         idx = self.mode_combo.currentIndex()
         mode_value = self._mode_values[idx] if idx > 0 else None
+        src_idx = self.source_combo.currentIndex()
+        source_value = self._source_values[src_idx] if src_idx > 0 else None
         face_id_data = self.face_id_combo.currentData()
         filter_params = {
             "start_date": self.start_date_edit.date().toString("yyyy-MM-dd"),
@@ -279,6 +300,7 @@ class FilterSidebar(QFrame):
             "focus_max": self.focus_max_spin.value(),
             "abnormal_min": self.abnormal_min_spin.value(),
             "abnormal_max": self.abnormal_max_spin.value(),
+            "video_source_type": source_value,
         }
         print(f"[FilterSidebar] 应用筛选条件: {filter_params}")
         self.filter_applied.emit(filter_params)
@@ -286,6 +308,8 @@ class FilterSidebar(QFrame):
     def get_current_filter(self):
         idx = self.mode_combo.currentIndex()
         mode_value = self._mode_values[idx] if idx > 0 else None
+        src_idx = self.source_combo.currentIndex()
+        source_value = self._source_values[src_idx] if src_idx > 0 else None
         face_id_data = self.face_id_combo.currentData()
         return {
             "start_date": self.start_date_edit.date().toString("yyyy-MM-dd"),
@@ -296,6 +320,7 @@ class FilterSidebar(QFrame):
             "focus_max": self.focus_max_spin.value(),
             "abnormal_min": self.abnormal_min_spin.value(),
             "abnormal_max": self.abnormal_max_spin.value(),
+            "video_source_type": source_value,
         }
 
     def get_chart_options(self):
