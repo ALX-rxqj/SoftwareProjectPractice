@@ -34,6 +34,7 @@ class VideoFrameData:
     frame: Any
     faces: list
     timestamp: float
+    frame_progress: Optional[Dict[str, int]] = None
 
 
 @dataclass
@@ -194,7 +195,8 @@ class UnifiedDataManager:
             video_data = VideoFrameData(
                 frame=data.frame,
                 faces=data.faces,
-                timestamp=data.timestamp
+                timestamp=data.timestamp,
+                frame_progress=data.frame_progress,
             )
             self._video_frame_callback(video_data)
 
@@ -278,9 +280,16 @@ class UnifiedDataManager:
                 data = VideoFrameData(
                     frame=mock.get("frame"),
                     faces=mock.get("faces", []),
-                    timestamp=mock.get("timestamp", 0.0)
+                    timestamp=mock.get("timestamp", 0.0),
+                    frame_progress=mock.get("frame_progress"),
                 )
                 self._video_frame_callback(data)
+
+                # Mock 文件模式：检测播放结束
+                if mock.get("file_ended"):
+                    import os
+                    file_name = os.path.basename(mock_data_manager._file_mode_path) if mock_data_manager._file_mode_path else ""
+                    interface_manager.on_file_playback_ended(file_name)
 
     def push_focus_result(self, data: Optional[Dict] = None):
         """推送专注度结果数据"""
@@ -434,6 +443,10 @@ class UnifiedDataManager:
             if session_abnormal < abnormal_min or session_abnormal > abnormal_max:
                 continue
 
+            video_source_filter = filter_params.get("video_source_type")
+            if video_source_filter and session.get("video_source_type") != video_source_filter:
+                continue
+
             filtered.append(session)
 
         return filtered
@@ -511,6 +524,36 @@ class UnifiedDataManager:
             self._stop_mock_video_timer()
         return {"success": True, "msg": f"{action}视频采集指令已发送"}
 
+    def load_video_file(self, file_path: str) -> Dict[str, Any]:
+        """加载本地视频文件并开始播放
+
+        REAL 路径：转发至 interface_manager → 预处理模块
+        MOCK 路径：启动 mock 视频定时器
+        """
+        print(f"[UnifiedDataManager] 加载本地视频文件: {file_path}")
+
+        if self._preprocessing_source == DataSource.REAL:
+            return interface_manager.load_video_file(file_path)
+
+        # MOCK 路径
+        self._mock_capture_running = True
+        mock_data_manager.set_file_mode(file_path)
+        self._start_mock_video_timer()
+        return {"success": True, "msg": f"视频文件加载指令已发送"}
+
+    def stop_capture(self) -> Dict[str, Any]:
+        """统一停止视频采集（摄像头/文件）"""
+        print(f"[UnifiedDataManager] 停止视频采集")
+
+        if self._preprocessing_source == DataSource.REAL:
+            return interface_manager.stop_capture()
+
+        # MOCK 路径
+        self._mock_capture_running = False
+        mock_data_manager.set_file_mode(None)
+        self._stop_mock_video_timer()
+        return {"success": True, "msg": "采集已停止"}
+
     def _start_mock_video_timer(self):
         if self._mock_video_timer is not None:
             return
@@ -526,12 +569,18 @@ class UnifiedDataManager:
         self._mock_video_timer = None
         print("[UnifiedDataManager] Mock 视频帧定时器已停止")
 
-    def toggle_analysis(self, start: bool, face_id: str = None) -> Optional[Dict[str, Any]]:
+    def toggle_analysis(self, start: bool, face_id: str = None,
+                        video_source_type: str = "camera",
+                        file_name: str = None) -> Optional[Dict[str, Any]]:
         action = "启动" if start else "停止"
         print(f"[UnifiedDataManager] {action}专注度分析")
 
         if self._state_estimation_source == DataSource.REAL:
-            return interface_manager.toggle_analysis(start, face_id=face_id)
+            return interface_manager.toggle_analysis(
+                start, face_id=face_id,
+                video_source_type=video_source_type,
+                file_name=file_name,
+            )
 
         # MOCK 路径
         if start:
@@ -722,9 +771,14 @@ class UnifiedDataManager:
         ptype = packet.get("type", "")
         if ptype == "face_registration_result":
             interface_manager.on_face_registration_result(packet)
+        elif ptype == "file_playback_ended":
+            interface_manager.on_file_playback_ended(
+                packet.get("file_path", "")
+            )
         else:
             interface_manager.on_video_frame_received(
-                packet.get("frame"), packet.get("faces", []), packet.get("timestamp", 0.0)
+                packet.get("frame"), packet.get("faces", []), packet.get("timestamp", 0.0),
+                frame_progress=packet.get("frame_progress"),
             )
 
     def _on_preprocessing_video_frame(self, frame, faces, timestamp):

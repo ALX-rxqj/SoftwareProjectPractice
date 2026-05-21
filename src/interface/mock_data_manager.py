@@ -35,6 +35,8 @@ class MockSession:
     mode: str
     avg_focus_score: float
     abnormal_event_count: int
+    video_source_type: str = "camera"
+    file_name: Optional[str] = None
 
 
 @dataclass
@@ -85,6 +87,11 @@ class MockDataManager:
         self._simulated_sessions: Dict[str, MockSession] = {}
         self._simulated_records: Dict[str, List[MockFocusRecord]] = {}
 
+        # 文件模式 Mock 状态
+        self._file_mode_path: Optional[str] = None
+        self._file_frame_index: int = 0
+        self._file_total_frames: int = 300  # 模拟 10 秒 @30fps
+
     @property
     def is_enabled(self) -> bool:
         return self._global_enabled
@@ -134,7 +141,9 @@ class MockDataManager:
             end_time=f"{date} {end_hour:02d}:{end_minute:02d}:00",
             mode=random.choice(["class", "exam"]),
             avg_focus_score=avg_focus,
-            abnormal_event_count=random.randint(0, 5)
+            abnormal_event_count=random.randint(0, 5),
+            video_source_type=random.choice(["camera", "file"]),
+            file_name="模拟课堂录像.mp4" if random.random() > 0.7 else None,
         )
 
     def generate_realtime_scores(self) -> Dict[str, Any]:
@@ -206,12 +215,34 @@ class MockDataManager:
             return random.choice(warn_types)
         return None
 
+    def set_file_mode(self, file_path: Optional[str]) -> None:
+        """设置/清除文件模式
+
+        Args:
+            file_path: 文件路径，传 None 退出文件模式
+        """
+        self._file_mode_path = file_path
+        self._file_frame_index = 0
+        if file_path:
+            print(f"[MockDataManager] 进入文件模式: {file_path}")
+
+    @property
+    def is_file_mode(self) -> bool:
+        return self._file_mode_path is not None
+
+    @property
+    def current_file_name(self) -> Optional[str]:
+        if self._file_mode_path:
+            import os
+            return os.path.basename(self._file_mode_path)
+        return None
+
     def generate_video_frame_data(self) -> Dict[str, Any]:
         """
         生成符合PRI-01接口格式的视频帧数据（简化版）
 
         Returns:
-            dict: 包含frame、faces、timestamp
+            dict: 包含frame、faces、timestamp，文件模式下额外包含frame_progress
         """
         if not self._global_enabled:
             return {}
@@ -231,13 +262,28 @@ class MockDataManager:
                 "is_main_face": (i == 0)
             })
 
-        return {
+        result = {
             "frame": None,
             "faces": faces,
             "timestamp": random.uniform(0, 1000),
             "has_face": num_faces > 0,
             "main_face_id": 1 if num_faces > 0 else -1
         }
+
+        # 文件模式：附加进度信息
+        if self._file_mode_path:
+            self._file_frame_index += 1
+            if self._file_frame_index > self._file_total_frames:
+                self._file_frame_index = self._file_total_frames
+            result["frame_progress"] = {
+                "current_frame": self._file_frame_index,
+                "total_frames": self._file_total_frames,
+            }
+            # 模拟文件播放结束
+            if self._file_frame_index >= self._file_total_frames:
+                result["file_ended"] = True
+
+        return result
 
     def delete_face(self, face_id: str) -> Dict[str, Any]:
         """从模拟列表中移除指定人脸"""
@@ -384,7 +430,9 @@ class MockDataManager:
                 "end_time": s.end_time,
                 "mode": s.mode,
                 "avg_focus_score": s.avg_focus_score,
-                "abnormal_event_count": s.abnormal_event_count
+                "abnormal_event_count": s.abnormal_event_count,
+                "video_source_type": s.video_source_type,
+                "file_name": s.file_name,
             }
             for s in sessions
         ]

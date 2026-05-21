@@ -37,6 +37,7 @@ class VideoFrameData:
     frame: Any
     faces: list
     timestamp: float
+    frame_progress: Optional[Dict[str, int]] = None
 
 
 @dataclass
@@ -81,6 +82,7 @@ class InterfaceManager:
         self._camera_list_callback: Optional[Callable] = None
         self._face_registration_frame_callback: Optional[Callable] = None
         self._face_registration_result_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        self._file_playback_ended_callback: Optional[Callable[[str], None]] = None
 
         self._preprocessing_callback: Optional[Callable] = None
         self._state_estimation_callback: Optional[Callable] = None
@@ -123,13 +125,24 @@ class InterfaceManager:
         """清除人脸注册异步结果回调"""
         self._face_registration_result_callback = None
 
+    def register_file_playback_ended_callback(self, callback: Callable[[str], None]):
+        """注册文件播放完成回调"""
+        self._file_playback_ended_callback = callback
+
+    def on_file_playback_ended(self, file_path: str):
+        """接收预处理模块的文件播放完成信号"""
+        print(f"[InterfaceManager] 文件播放完成: {file_path}")
+        if self._file_playback_ended_callback:
+            self._file_playback_ended_callback(file_path)
+
     def on_face_registration_result(self, data: Dict[str, Any]):
         """接收预处理模块的异步人脸注册结果（PRI-04 上行包）"""
         print(f"[InterfaceManager] 人脸注册结果: {data}")
         if self._face_registration_result_callback:
             self._face_registration_result_callback(data)
 
-    def on_video_frame_received(self, frame: Any, faces: list, timestamp: float):
+    def on_video_frame_received(self, frame: Any, faces: list, timestamp: float,
+                                frame_progress: Optional[Dict[str, int]] = None):
         """
         PRI-01: 接收预处理模块发送的视频帧数据
         调用时机：每帧处理后发送，用于画面渲染与标注
@@ -138,11 +151,15 @@ class InterfaceManager:
             frame: BGR numpy array
             faces: list of {face_id:int, bbox:[x,y,w,h]}
             timestamp: float
+            frame_progress: 可选，文件模式下 {"current_frame": int, "total_frames": int}
         """
         if self._face_registration_frame_callback:
             self._face_registration_frame_callback(frame, faces, timestamp)
         if self._video_frame_callback:
-            data = VideoFrameData(frame=frame, faces=faces, timestamp=timestamp)
+            data = VideoFrameData(
+                frame=frame, faces=faces, timestamp=timestamp,
+                frame_progress=frame_progress,
+            )
             self._video_frame_callback(data)
 
     def on_camera_list_received(self, camera_list: List[Dict[str, Any]]):
@@ -251,6 +268,25 @@ class InterfaceManager:
             self.clear_face_registration_result_callback()
         return {"success": True, "msg": f"{action}视频采集指令已发送"}
 
+    def stop_capture(self) -> Dict[str, Any]:
+        """
+        指令：统一停止视频采集（摄像头/文件）
+        路由：转发至预处理模块，替代 toggle_capture(start=False)
+
+        Returns:
+            {success: bool, msg: str}
+        """
+        print(f"[InterfaceManager] 停止视频采集")
+
+        self._is_capture_running = False
+        self.clear_face_registration_frame_callback()
+        self.clear_face_registration_result_callback()
+
+        if self._preprocessing_callback:
+            return self._preprocessing_callback("stop_capture", {})
+
+        return {"success": True, "msg": "采集已停止"}
+
     def load_video_file(self, file_path: str) -> Dict[str, Any]:
         """
         指令：加载本地视频文件
@@ -272,7 +308,9 @@ class InterfaceManager:
 
         return {"success": True, "msg": "视频文件加载指令已发送"}
 
-    def toggle_analysis(self, start: bool, face_id: str = None) -> Optional[Dict[str, Any]]:
+    def toggle_analysis(self, start: bool, face_id: str = None,
+                        video_source_type: str = "camera",
+                        file_name: str = None) -> Optional[Dict[str, Any]]:
         """
         指令：启动/停止专注度分析
         路由：直接至状态估计模块
@@ -280,6 +318,8 @@ class InterfaceManager:
         Args:
             start: bool - True启动，False停止
             face_id: str - 启动时传入被监控的人脸ID
+            video_source_type: "camera" 或 "file"
+            file_name: 可选，文件模式下传入视频文件名
 
         Returns:
             启动时返回 {session_id: str}，停止时返回 {success: bool}
@@ -290,7 +330,11 @@ class InterfaceManager:
         self._is_analysis_running = start
 
         if start:
-            session_id = self.start_new_session(face_id=face_id)
+            session_id = self.start_new_session(
+                face_id=face_id,
+                video_source_type=video_source_type,
+                file_name=file_name,
+            )
             return {"session_id": session_id}
         else:
             if self._current_session_id:
@@ -298,13 +342,17 @@ class InterfaceManager:
             self._is_analysis_running = False
             return {"success": True}
 
-    def start_new_session(self, face_id: str = None) -> str:
+    def start_new_session(self, face_id: str = None,
+                          video_source_type: str = "camera",
+                          file_name: str = None) -> str:
         """
         指令：创建新会话
         路由：直接至数据库模块（写 sessions 表）
 
         Args:
             face_id: 可选，被监控人脸标识
+            video_source_type: "camera" 或 "file"
+            file_name: 可选，文件模式下传入视频文件名（不含路径）
 
         Returns:
             session_id: str
@@ -313,13 +361,16 @@ class InterfaceManager:
         self._current_session_id = f"session_{uuid.uuid4().hex[:8]}"
         start_time = _time.time()
         mode_str = self._current_mode.value  # "class" or "exam"
-        print(f"[InterfaceManager] 创建新会话: {self._current_session_id}")
+        print(f"[InterfaceManager] 创建新会话: {self._current_session_id}, "
+              f"source={video_source_type}")
 
         ok = database_service.create_session({
             "session_id": self._current_session_id,
             "face_id": face_id,
             "mode": mode_str,
             "start_time": start_time,
+            "video_source_type": video_source_type,
+            "file_name": file_name,
         })
         if not ok:
             print(f"[InterfaceManager] ⚠ 会话写入数据库失败！session_id={self._current_session_id}")

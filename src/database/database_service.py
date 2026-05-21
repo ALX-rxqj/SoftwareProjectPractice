@@ -170,8 +170,9 @@ class DatabaseService:
             print(f"[DatabaseService] create_session 缺少必填字段: {missing}")
             return False
 
-        sql = ("INSERT INTO sessions (session_id, face_id, mode, start_time) "
-               "VALUES (?, ?, ?, ?)")
+        sql = ("INSERT INTO sessions (session_id, face_id, mode, start_time, "
+               "video_source_type, file_name) "
+               "VALUES (?, ?, ?, ?, ?, ?)")
         last_error = None
         for attempt in range(3):
             try:
@@ -181,6 +182,8 @@ class DatabaseService:
                     session.get("face_id"),
                     session["mode"],
                     session["start_time"],
+                    session.get("video_source_type", "camera"),
+                    session.get("file_name"),
                 ))
                 conn.commit()
                 print(f"[DatabaseService] 会话已创建: {session['session_id']}")
@@ -390,6 +393,11 @@ class DatabaseService:
         if face_id:
             conditions.append("face_id = ?")
             values.append(face_id)
+
+        video_source_type = filter_params.get("video_source_type")
+        if video_source_type:
+            conditions.append("video_source_type = ?")
+            values.append(video_source_type)
 
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         sql = f"SELECT * FROM sessions{where} ORDER BY start_time DESC"

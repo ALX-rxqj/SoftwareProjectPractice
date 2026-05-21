@@ -5,6 +5,7 @@ from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QFrame, QVBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QWidget, QHBoxLayout, QPushButton, QCheckBox, QMenu, QAction,
+    QFileDialog,
 )
 
 from .config import LEFT_BAR_WIDTH
@@ -18,6 +19,7 @@ class LeftSideBar(QFrame):
     face_selected = pyqtSignal(str)
     face_delete_requested = pyqtSignal(str)
     show_bbox_toggled = pyqtSignal(bool)
+    file_selected = pyqtSignal(str)  # 发射 file_path
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -27,6 +29,8 @@ class LeftSideBar(QFrame):
         self._cameras = []
         self._current_device_id = 0
         self._faces_data = []
+        self._file_path: Optional[str] = None
+        self._file_item: Optional[QListWidgetItem] = None
         self.init_ui()
 
     def init_ui(self):
@@ -41,7 +45,7 @@ class LeftSideBar(QFrame):
         layout.addWidget(self._section_divider())
 
         title_layout = QHBoxLayout()
-        camera_title = QLabel("摄像头列表")
+        camera_title = QLabel("数据源列表")
         camera_title.setFont(QFont(*get_font("base", "semibold", "ui")))
         camera_title.setStyleSheet(get_style("label_section_title"))
 
@@ -120,6 +124,31 @@ class LeftSideBar(QFrame):
         self._cameras = cameras
         self.camera_list.clear()
 
+        # ── 第一个条目：打开本地文件 ──
+        self._file_item = QListWidgetItem()
+        file_widget = QWidget()
+        file_widget.setStyleSheet("background: transparent;")
+        file_layout = QHBoxLayout(file_widget)
+        file_layout.setContentsMargins(
+            get_spacing("md"), get_spacing("sm"),
+            get_spacing("md"), get_spacing("sm"),
+        )
+
+        file_avatar = self._make_avatar("F")
+        self._file_label = QLabel("📁 打开本地文件...")
+        self._file_label.setFont(QFont(*get_font("base", "medium", "ui")))
+        self._file_label.setStyleSheet(f"color: {COLORS['text']};")
+
+        file_layout.addWidget(file_avatar)
+        file_layout.addSpacing(get_spacing("md"))
+        file_layout.addWidget(self._file_label)
+        file_layout.addStretch()
+
+        self._file_item.setData(Qt.UserRole, -1)  # device_id=-1 标识文件条目
+        self.camera_list.addItem(self._file_item)
+        self.camera_list.setItemWidget(self._file_item, file_widget)
+
+        # ── 摄像头条目 ──
         for camera in cameras:
             item = QListWidgetItem()
             item_widget = QWidget()
@@ -251,9 +280,29 @@ class LeftSideBar(QFrame):
 
     def on_camera_clicked(self, item):
         device_id = item.data(Qt.UserRole)
-        self._current_device_id = device_id
-        self.camera_selected.emit(device_id)
-        print(f"[LeftSideBar] 选择摄像头: device_id={device_id}")
+
+        if device_id == -1:
+            # 文件选择条目
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "打开本地视频文件", "",
+                "所有文件 (*.*)",
+            )
+            if file_path:
+                self._file_path = file_path
+                import os
+                self._file_label.setText(f"📁 {os.path.basename(file_path)}")
+                self.camera_list.clearSelection()
+                self._file_item.setSelected(True)
+                self._current_device_id = -1
+                self.file_selected.emit(file_path)
+                print(f"[LeftSideBar] 选择本地文件: {file_path}")
+        else:
+            # 摄像头条目：清除文件选择
+            self._file_path = None
+            self._file_label.setText("📁 打开本地文件...")
+            self._current_device_id = device_id
+            self.camera_selected.emit(device_id)
+            print(f"[LeftSideBar] 选择摄像头: device_id={device_id}")
 
     def set_current_device(self, device_id):
         self._current_device_id = device_id
@@ -261,3 +310,6 @@ class LeftSideBar(QFrame):
 
     def get_current_device_id(self) -> int:
         return self._current_device_id
+
+    def get_selected_file_path(self) -> Optional[str]:
+        return self._file_path
