@@ -45,7 +45,7 @@ class LeftSideBar(QFrame):
         layout.addWidget(self._section_divider())
 
         title_layout = QHBoxLayout()
-        camera_title = QLabel("摄像头列表")
+        camera_title = QLabel("数据源列表")
         camera_title.setFont(QFont(*get_font("base", "semibold", "ui")))
         camera_title.setStyleSheet(get_style("label_section_title"))
 
