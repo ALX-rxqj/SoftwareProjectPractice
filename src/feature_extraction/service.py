@@ -27,11 +27,14 @@ Feature Extraction Service - 与Preprocessing的数据对接层
     )
 """
 
+import os as _os
 from typing import Callable, Dict, Any, Optional
 import logging
 
 from .io_interface import IOInterface
 
+# 模型文件默认路径（相对于本模块的 assets/ 子目录）
+_ASSETS_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'assets')
 
 # 类型别名
 ScoringCallback = Callable[[Dict[str, Any]], None]
@@ -42,17 +45,17 @@ StateCallback = Callable[[Dict[str, Any]], None]
 
 class FeatureExtractionService:
     """特征提取服务类，接收并处理来自preprocessing的数据包。
-    
+
     attributes:
         io_interface: IOInterface实例，用于处理单条输入
         scoring_callback: 向下游评分系统发送结果的回调函数
         log_callback: 日志输出回调函数
     """
-    
+
     def __init__(
         self,
-        face_model_path: str = 'assets/face_detector.onnx',
-        mark_model_path: str = 'assets/face_landmarks.onnx',
+        face_model_path: str = _os.path.join(_ASSETS_DIR, 'face_detector.onnx'),
+        mark_model_path: str = _os.path.join(_ASSETS_DIR, 'face_landmarks.onnx'),
         scoring_callback: Optional[ScoringCallback] = None,
         log_callback: Optional[LogCallback] = None,
         state_callback: Optional[StateCallback] = None,

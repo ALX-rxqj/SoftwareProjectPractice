@@ -12,13 +12,13 @@
 from typing import Callable, Dict, List, Any, Optional
 import numpy as np
 
-from face_detection import FaceDetector
-from mark_detection import MarkDetector
-from pose_estimation import PoseEstimator
-from utils import refine
+from .face_detection import FaceDetector
+from .mark_detection import MarkDetector
+from .pose_estimation import PoseEstimator
+from .utils import refine
 
 # 为了复用 main 中的注意力/张嘴/闭眼等算法，安全导入这些函数
-from metrics import (
+from .metrics import (
     _build_default_output,
     _build_prompt_output,
     _estimate_attention_state,

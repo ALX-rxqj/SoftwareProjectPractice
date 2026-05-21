@@ -20,8 +20,8 @@
   - on_query_cameras: 获取摄像头列表（转发预处理模块）
   - on_query_sessions: 查询会话列表（按筛选条件）
   - on_query_records: 查询专注度评分记录（按会话ID）
-    数据类（供其他模块调用）：
-    - on_features_extracted: 接收特征提取模块的完整输出字典
+  数据类（供其他模块调用）：
+  - on_features_extracted: 接收特征提取模块的 FEI-01 数据
   - on_feature_received: 直接接收 FeatureData（内部/兼容）
 """
 
@@ -34,7 +34,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from .contracts import FeatureData, FocusResultData, MonitorMode, WarnInfo
+from .contracts import FeatureData, FocusResultData, MonitorMode
 from .downsampler import Downsampler
 from .estimator import FocusEstimator
 from .session_manager import SessionManager
@@ -72,7 +72,7 @@ class StateEstimationService:
         self._stop_event = threading.Event()
 
         # 模拟特征数据（用于测试，后续应从特征提取模块接收）
-        self._mock_feature_enabled = True
+        self._mock_feature_enabled = False
 
         # 模拟评分记录缓存（用于 on_query_records 的 MOCK 模式）
         self._mock_records_cache: Dict[str, List[Dict[str, Any]]] = {}
@@ -228,7 +228,6 @@ class StateEstimationService:
             else:
                 session_id = self._session_manager.create_session()
             self._start_processing()
-            self._schedule_snapshot()
             return {"session_id": session_id}
         else:
             # 停止分析：停止处理线程并结束会话
@@ -584,27 +583,23 @@ class StateEstimationService:
 
     def on_features_extracted(self, feature_output: Dict[str, Any]):
         """
-        接收特征提取模块的完整输出字典
-        输入字典格式（FEI-01接口）：
+        接收特征提取模块的完整输出字典（FEI-01 接口）
+
+        输入字典格式（来自 feature_extraction service）：
         {
             "timestamp": float,
             "face_id": str,
             "face_matched": bool,
             "features": {
                 "head_pose": {pitch, yaw, roll, confidence},
-                "eye_state": {value, confidence},
-                "is_looking_screen": {value, confidence},
-                "attention_state": {value, confidence},
-                "face_distance_state": {value, confidence},
-                "is_yawning": {value, confidence},
-                "num_face_total": {value, confidence}
+                "eye_state": {value: int(0=open,1=closed), confidence},
+                "is_looking_screen": {value: bool, confidence},
+                "attention_state": {value: int(0=focused,1=distracted,2=sleepy,3=absent), confidence},
+                "face_distance_state": {value: int(0=normal,1=too_far,2=too_close), confidence},
+                "is_yawning": {value: bool, confidence},
+                "num_face_total": {value: int, confidence}
             }
         }
-
-        说明：
-        - face_matched 会被保留在FeatureData中，用于上游追踪和统计
-        - 状态估计主要使用 features 中的各项指标进行评分
-        - 若 face_id 无效或 features 缺失，则按兜底逻辑处理
 
         本方法将完整输出字典转换为内部 FeatureData，
         然后进入统一的评分管线处理。
@@ -617,11 +612,10 @@ class StateEstimationService:
         face_matched = bool(feature_output.get("face_matched", False))
         features = feature_output.get("features", {}) if isinstance(feature_output, dict) else {}
 
-        # 将输出字典转换为内部 FeatureData（包含所有字段）
+        # 将输出字典转换为内部 FeatureData
         feature_data = FeatureData(
             timestamp=timestamp,
             face_id=face_id,
-            face_matched=face_matched,
             head_pose=features.get("head_pose", {}),
             eye_state=features.get("eye_state", {}),
             is_looking_screen=features.get("is_looking_screen", {}),
@@ -629,6 +623,7 @@ class StateEstimationService:
             face_distance_state=features.get("face_distance_state", {}),
             is_yawning=features.get("is_yawning", {}),
             num_face_total=features.get("num_face_total", {"value": 1, "confidence": 1.0}),
+            face_matched=face_matched,
         )
         # 进入统一的评分处理管线
         self.on_feature_received(feature_data)
@@ -654,7 +649,7 @@ class StateEstimationService:
         session_id = self._session_manager.current_session_id or "unknown"
 
         # 使用评估器计算评分（人数从 feature_data.num_face_total 提取）
-        scores, is_force_zero, is_over_threshold, warn_info = self._estimator.estimate(feature_data)
+        scores, is_force_zero, is_over_threshold, warn_candidates = self._estimator.estimate(feature_data)
 
         # 构建专注度结果
         result = FocusResultData(
@@ -668,24 +663,22 @@ class StateEstimationService:
             final_focus_score=scores.get("final_focus", 0.0),
             is_force_zero=is_force_zero,
             is_over_threshold=is_over_threshold,
-            warn_msg=warn_info,
+            warn_candidates=warn_candidates,
         )
 
         # 降采样：窗口满时才输出，否则缓存
         downsampled = self._downsampler.add_frame(result)
         if downsampled is not None:
             self._dispatch_focus_result(downsampled)
-            # 收集同窗口的 DB 降采样帧
-            db_frame = self._downsampler.get_db_frame()
-            if db_frame is not None:
-                self._db_buffer.append(db_frame.to_dict())
+            # UI/DB 共用同一输出帧
+            self._db_buffer.append(downsampled.to_dict())
 
         # 更新会话统计（所有帧都统计，不经过降采样）
         if session_id:
             self._session_manager.update_session_stats(
                 session_id,
                 frames_processed=1,
-                abnormal_events=1 if warn_info else 0
+                abnormal_events=1 if warn_candidates else 0
             )
 
     def _dispatch_focus_result(self, result: FocusResultData):
@@ -718,6 +711,10 @@ class StateEstimationService:
             daemon=True
         )
         self._processing_thread.start()
+        # 首次 5 分钟后开始定期刷库
+        self._snapshot_timer = threading.Timer(300, self._schedule_periodic_flush)
+        self._snapshot_timer.daemon = True
+        self._snapshot_timer.start()
         self._log("专注度分析已启动")
 
     def _stop_processing(self):
@@ -736,9 +733,7 @@ class StateEstimationService:
         remaining = self._downsampler.flush()
         if remaining:
             self._dispatch_focus_result(remaining)
-            db_frame = self._downsampler.get_db_frame()
-            if db_frame is not None:
-                self._db_buffer.append(db_frame.to_dict())
+            self._db_buffer.append(remaining.to_dict())
 
         # 刷库
         self._flush_db_buffer()
@@ -756,13 +751,13 @@ class StateEstimationService:
         while not self._stop_event.is_set():
             if self._mock_feature_enabled:
                 # 生成完整输出字典并送入管线
-                feature_output = self._generate_mock_feature_output()
+                feature_output = self._generate_mock_features()
                 self.on_features_extracted(feature_output)
 
             # 控制处理频率（约30fps）
             time.sleep(1.0 / 30.0)
 
-    def _generate_mock_feature_output(self) -> Dict[str, Any]:
+    def _generate_mock_features(self) -> Dict[str, Any]:
         """
         生成与 feature_extraction 输出格式一致的模拟字典（用于测试）
 
@@ -772,11 +767,11 @@ class StateEstimationService:
         head_pose 为 {pitch, yaw, roll, confidence}。
 
         Returns:
-            完整输出字典，与service.py输出一致
+            完整输出字典，与 feature_extraction service 输出一致
         """
         timestamp = time.time()
-        face_id = "face_001"  # 模拟单人场景，face_id为字符串
-        face_matched = True
+        face_id = "face_001"  # 模拟单人场景，face_id 为字符串
+        face_matched = random.random() > 0.05  # 5% 概率不匹配
 
         # 注意力状态离散值
         attention_value = random.choices([0, 1, 2, 3], weights=[0.80, 0.12, 0.05, 0.03])[0]
@@ -847,11 +842,11 @@ class StateEstimationService:
         Returns:
             模拟的 FeatureData
         """
-        feature_output = self._generate_mock_feature_output()
+        feature_output = self._generate_mock_features()
         features = feature_output.get("features", {})
         return FeatureData(
             timestamp=float(feature_output.get("timestamp", time.time())),
-            face_id=feature_output.get("face_id", 1),
+            face_id=feature_output.get("face_id", "face_001"),
             head_pose=features.get("head_pose", {}),
             eye_state=features.get("eye_state", {}),
             is_looking_screen=features.get("is_looking_screen", {}),
@@ -859,6 +854,7 @@ class StateEstimationService:
             face_distance_state=features.get("face_distance_state", {}),
             is_yawning=features.get("is_yawning", {}),
             num_face_total=features.get("num_face_total", {"value": 1, "confidence": 1.0}),
+            face_matched=bool(feature_output.get("face_matched", True)),
         )
 
     # ================================================================
@@ -902,44 +898,66 @@ class StateEstimationService:
     # ================================================================
 
     def _flush_db_buffer(self):
-        """将缓冲的评分记录批量写入数据库"""
-        if self._write_callback and self._db_buffer:
+        """将缓冲的评分记录批量写入数据库，失败时存 JSON 兜底"""
+        session_id = self._session_manager.current_session_id
+        if not self._write_callback or not session_id:
+            return
+        os.makedirs(self._snapshot_dir, exist_ok=True)
+        path = os.path.join(self._snapshot_dir, f"{session_id}.json")
+
+        # Step 1: 先处理上次失败残留的 JSON
+        pending = self._load_pending_json(path)
+        if pending:
             try:
-                self._write_callback(self._db_buffer)
+                self._write_callback(pending)
+                self._log(f"已补写 {len(pending)} 条待重试记录到数据库")
+                self._delete_pending_json(path)
+            except Exception as e:
+                self._log(f"补写失败: {e}，合并当前 buffer 到 JSON")
+                pending.extend(self._db_buffer)
+                self._save_pending_json(path, pending)
+                self._db_buffer.clear()
+                return
+
+        # Step 2: 写当前 buffer
+        if self._db_buffer:
+            try:
+                self._write_callback(list(self._db_buffer))
                 self._log(f"已写入 {len(self._db_buffer)} 条评分记录到数据库")
-                self._delete_snapshot()
             except Exception as e:
                 self._log(f"数据库写入失败: {e}")
+                self._save_pending_json(path, list(self._db_buffer))
             finally:
                 self._db_buffer.clear()
 
-    def _schedule_snapshot(self):
-        """启动快照定时器：每 5 分钟写一次本地 JSON"""
-        self._save_snapshot()
+    def _schedule_periodic_flush(self):
+        """每 5 分钟执行一次：刷库 + 重新调度"""
+        self._flush_db_buffer()
         if self._is_processing:
-            self._snapshot_timer = threading.Timer(300, self._schedule_snapshot)
+            self._snapshot_timer = threading.Timer(300, self._schedule_periodic_flush)
             self._snapshot_timer.daemon = True
             self._snapshot_timer.start()
 
-    def _save_snapshot(self):
-        """将 _db_buffer 写入 snapshots/<session_id>.json"""
-        session_id = self._session_manager.current_session_id
-        if not session_id or not self._db_buffer:
-            return
+    def _load_pending_json(self, path: str):
+        """加载待重试的 JSON 数据"""
         try:
-            os.makedirs(self._snapshot_dir, exist_ok=True)
-            path = os.path.join(self._snapshot_dir, f"{session_id}.json")
+            if os.path.isfile(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            self._log(f"加载待重试快照失败: {e}")
+        return None
+
+    def _save_pending_json(self, path: str, records):
+        """保存失败数据到 JSON 等待下次重试"""
+        try:
             with open(path, "w", encoding="utf-8") as f:
-                json.dump(self._db_buffer, f, ensure_ascii=False, indent=2)
+                json.dump(records, f, ensure_ascii=False, indent=2)
         except OSError as e:
             self._log(f"快照写入失败: {e}")
 
-    def _delete_snapshot(self):
-        """刷库成功后删除快照文件"""
-        session_id = self._session_manager.current_session_id
-        if not session_id:
-            return
-        path = os.path.join(self._snapshot_dir, f"{session_id}.json")
+    def _delete_pending_json(self, path: str):
+        """补写成功后删除 JSON 文件"""
         try:
             if os.path.isfile(path):
                 os.remove(path)

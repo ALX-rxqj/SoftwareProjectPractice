@@ -4,21 +4,27 @@
 将逐帧评分结果（~30fps）按固定时间窗口压缩为每窗1条输出，
 降低数据库存储量和界面数据压力，同时保留分数走向趋势。
 
-方法：窗口均值 + 异常直通
-- 正常帧：选取窗口内 final_focus 最接近均值的帧
-- 全异常窗口：取第一帧异常帧
-- 连续异常检测：窗内连续≥N帧异常时，标记告警
+方法：告警占比 + 均值帧选取
+- 窗口内按告警类型独立统计占比
+- 任一类型占比 >= 0.5 则触发告警，多类型触发时按优先级取最高者
+- 全异常窗口取第一帧
+- 触发告警时在获胜类型帧中选 final_focus 最接近均值的帧
+- 无告警时在正常帧中选 final_focus 最接近均值的帧
+- UI/DB 共用同一输出帧
 """
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple
 
-from .contracts import FocusResultData, WarnInfo
+from .contracts import (
+    FocusResultData, WarnInfo,
+    ANOMALY_RATIO_THRESHOLD, alert_priority,
+)
 
 # --- 降采样宏参数 ---
 DOWNSAMPLE_WINDOW_SECONDS = 1.0  # 时间窗口长度（秒）
-ANOMALY_CONSECUTIVE_THRESHOLD = 5  # 连续异常帧数阈值（窗口内连续≥此值触发告警）
 
 
 class Downsampler:
@@ -30,37 +36,25 @@ class Downsampler:
         for frame in frames:
             out = ds.add_frame(frame)
             if out:
-                send_to_ui(out)
+                send_to_ui(out)      # 同时也是 DB 帧
         final = ds.flush()
         if final:
-            send_to_ui(final)
+            send_to_ui(final)        # 同时也是 DB 帧
     """
 
-    def __init__(
-        self,
-        window_seconds: float = DOWNSAMPLE_WINDOW_SECONDS,
-        consecutive_threshold: int = ANOMALY_CONSECUTIVE_THRESHOLD,
-    ):
+    def __init__(self, window_seconds: float = DOWNSAMPLE_WINDOW_SECONDS):
         self._window_seconds = window_seconds
-        self._consecutive_threshold = consecutive_threshold
         self._buffer: List[FocusResultData] = []
-        self._last_db_frame: Optional[FocusResultData] = None
+        self._output_frame: Optional[FocusResultData] = None
 
     def add_frame(self, result: FocusResultData) -> Optional[FocusResultData]:
         """
         添加一帧评分结果。
 
         若缓冲区累计时间 ≥ 窗口长度，触发降采样输出。
-
-        Args:
-            result: 单帧评分结果
-
-        Returns:
-            降采样后的结果（窗口满时），否则 None
         """
         self._buffer.append(result)
 
-        # 检查窗口是否已满
         if len(self._buffer) >= 2:
             window_duration = result.timestamp - self._buffer[0].timestamp
             if window_duration >= self._window_seconds:
@@ -68,12 +62,7 @@ class Downsampler:
         return None
 
     def flush(self) -> Optional[FocusResultData]:
-        """
-        强制输出当前缓冲区（用于会话结束时清空残余帧）。
-
-        Returns:
-            降采样后的结果，缓冲区为空时返回 None
-        """
+        """强制输出当前缓冲区（用于会话结束时清空残余帧）"""
         if self._buffer:
             return self._emit_window()
         return None
@@ -81,12 +70,12 @@ class Downsampler:
     def reset(self):
         """清空缓冲区（用于会话切换）"""
         self._buffer.clear()
-        self._last_db_frame = None
+        self._output_frame = None
 
-    def get_db_frame(self) -> Optional[FocusResultData]:
-        """获取当前窗口的数据库降采样结果（消费式，取后即清）"""
-        result = self._last_db_frame
-        self._last_db_frame = None
+    def get_output_frame(self) -> Optional[FocusResultData]:
+        """获取当前窗口的输出帧（消费式，取后即清），UI 和 DB 共用"""
+        result = self._output_frame
+        self._output_frame = None
         return result
 
     # ================================================================
@@ -98,200 +87,98 @@ class Downsampler:
         if not self._buffer:
             return None
 
-        # 分离正常帧和异常帧
-        normal_frames = [f for f in self._buffer if not f.is_force_zero]
-        anomaly_frames = [f for f in self._buffer if f.is_force_zero]
+        total = len(self._buffer)
 
-        # DB 降采样（在清 buffer 前计算）
-        self._last_db_frame = self._pick_db_frame(normal_frames, anomaly_frames)
+        # 按告警类型独立统计帧数
+        type_counts: Dict[str, int] = defaultdict(int)
+        type_frames: Dict[str, List[FocusResultData]] = defaultdict(list)
+        normal_frames: List[FocusResultData] = []
+        anomaly_frames: List[FocusResultData] = []
 
-        if normal_frames:
-            output = self._pick_from_normal(normal_frames, anomaly_frames)
+        for f in self._buffer:
+            if f.is_force_zero:
+                anomaly_frames.append(f)
+            else:
+                normal_frames.append(f)
+
+            seen_types: set = set()
+            for w in f.warn_candidates:
+                if w.warn_type not in seen_types:
+                    type_counts[w.warn_type] += 1
+                    type_frames[w.warn_type].append(f)
+                    seen_types.add(w.warn_type)
+
+        # 找出所有占比 >= 阈值的告警类型
+        triggered_types: List[str] = []
+        for warn_type, count in type_counts.items():
+            if count / total >= ANOMALY_RATIO_THRESHOLD:
+                triggered_types.append(warn_type)
+
+        if triggered_types:
+            # 按优先级选最高者
+            winner_type = min(triggered_types, key=lambda t: alert_priority(t))
+            winner_frames = type_frames[winner_type]
+
+            if anomaly_frames and len(anomaly_frames) == total:
+                # 全异常窗口：取第一帧
+                output = anomaly_frames[0]
+            else:
+                # 在获胜类型帧中选 final_focus 最接近均值的帧
+                output = self._pick_closest_to_mean(winner_frames)
         else:
-            output = self._pick_from_all_anomaly(anomaly_frames)
+            # 无告警触发：在正常帧中选最接近均值的帧
+            if normal_frames:
+                output = self._pick_closest_to_mean(normal_frames)
+            else:
+                # 理论上不会走到这里（全异常窗口必定有人数告警触发）
+                output = self._buffer[0]
 
+        # 组装输出帧：warn_candidates 仅包含获胜告警
+        winner_warn = self._resolve_winner_warn(output, triggered_types)
+        output = FocusResultData(
+            timestamp=output.timestamp,
+            session_id=output.session_id,
+            head_pose_score=output.head_pose_score,
+            behavior_score=output.behavior_score,
+            expression_score=output.expression_score,
+            evidence_score=output.evidence_score,
+            people_score=output.people_score,
+            final_focus_score=output.final_focus_score,
+            is_force_zero=output.is_force_zero,
+            is_over_threshold=output.is_over_threshold,
+            warn_candidates=(winner_warn,) if winner_warn else (),
+        )
+
+        self._output_frame = output
         self._buffer.clear()
         return output
 
-    def _pick_from_normal(
+    def _pick_closest_to_mean(
+        self, frames: List[FocusResultData]
+    ) -> FocusResultData:
+        """在帧列表中选 final_focus_score 最接近均值的帧"""
+        mean_focus = sum(f.final_focus_score for f in frames) / len(frames)
+        return min(frames, key=lambda f: abs(f.final_focus_score - mean_focus))
+
+    def _resolve_winner_warn(
         self,
-        normal_frames: List[FocusResultData],
-        anomaly_frames: List[FocusResultData],
-    ) -> FocusResultData:
-        """
-        有正常帧时：
-        1. 计算 normal 帧的 final_focus 均值
-        2. 选最接近均值的那一帧作为输出
-        3. 检查连续异常帧数是否触发告警
-        """
-        # 计算 final_focus 均值
-        mean_focus = sum(f.final_focus_score for f in normal_frames) / len(normal_frames)
-
-        # 选最接近均值的帧
-        closest = min(normal_frames, key=lambda f: abs(f.final_focus_score - mean_focus))
-
-        # 连续异常检测
-        has_consecutive, anomaly_type = self._check_consecutive_anomaly(anomaly_frames)
-        if has_consecutive and anomaly_type:
-            # 覆盖 warn_info 为窗口内的人数异常类型
-            return FocusResultData(
-                timestamp=closest.timestamp,
-                session_id=closest.session_id,
-                head_pose_score=closest.head_pose_score,
-                behavior_score=closest.behavior_score,
-                expression_score=closest.expression_score,
-                evidence_score=closest.evidence_score,
-                people_score=closest.people_score,
-                final_focus_score=closest.final_focus_score,
-                is_force_zero=closest.is_force_zero,
-                is_over_threshold=closest.is_over_threshold,
-                warn_msg=anomaly_type,
-            )
-        else:
-            # 无连续异常，warn_info 置空
-            if closest.warn_msg is not None:
-                return FocusResultData(
-                    timestamp=closest.timestamp,
-                    session_id=closest.session_id,
-                    head_pose_score=closest.head_pose_score,
-                    behavior_score=closest.behavior_score,
-                    expression_score=closest.expression_score,
-                    evidence_score=closest.evidence_score,
-                    people_score=closest.people_score,
-                    final_focus_score=closest.final_focus_score,
-                    is_force_zero=closest.is_force_zero,
-                    is_over_threshold=closest.is_over_threshold,
-                    warn_msg=None,
-                )
-            return closest
-
-    def _pick_from_all_anomaly(
-        self, anomaly_frames: List[FocusResultData]
-    ) -> FocusResultData:
-        """全异常窗口：取第一帧，保留其原有 warn_info"""
-        return anomaly_frames[0]
-
-    # ================================================================
-    # 连续异常判断
-    # ================================================================
-
-    def _check_consecutive_anomaly(
-        self, anomaly_frames: List[FocusResultData]
-    ) -> Tuple[bool, Optional[WarnInfo]]:
-        """
-        检测窗口内是否存在连续 ≥ consecutive_threshold 帧异常。
-
-        将窗口帧按时间顺序扫描，找到最长连续异常序列。
-        若长度 ≥ 阈值，返回异常类型（按占比高的；占比相同取先出现）。
-
-        Args:
-            anomaly_frames: 窗口内所有异常帧（可能不连续）
-
-        Returns:
-            (是否触发, 异常告警类型或 None)
-        """
-        if not anomaly_frames:
-            return False, None
-
-        # 将全部帧按时间戳排序，扫描最长连续异常段
-        all_sorted = sorted(self._buffer, key=lambda f: f.timestamp)
-
-        max_anomaly_run = 0
-        best_anomaly_segment: List[FocusResultData] = []
-
-        current_run = 0
-        current_segment: List[FocusResultData] = []
-
-        for frame in all_sorted:
-            if frame.is_force_zero:
-                current_run += 1
-                current_segment.append(frame)
-                if current_run > max_anomaly_run:
-                    max_anomaly_run = current_run
-                    best_anomaly_segment = list(current_segment)
-            else:
-                current_run = 0
-                current_segment.clear()
-
-        if max_anomaly_run < self._consecutive_threshold:
-            return False, None
-
-        # 取最长连续异常段，按人数异常类型占比决定类型
-        anomaly_type = self._pick_anomaly_type(best_anomaly_segment)
-        return True, anomaly_type
-
-    def _pick_anomaly_type(
-        self, anomaly_segment: List[FocusResultData]
+        output_frame: FocusResultData,
+        triggered_types: List[str],
     ) -> Optional[WarnInfo]:
         """
-        从一段连续异常帧中，按比例选出告警类型。
+        从输出帧的候选告警中选出与触发类型匹配的 WarnInfo。
 
-        - 占比高的获胜
-        - 占比相同取先出现（帧顺序已按时间戳排好）
+        在输出帧的 warn_candidates 中找优先级最高且属于触发类型的告警。
+        使用输出帧的实际分数（而非触发时的分数）生成 detail。
         """
-        no_face_count = 0
-        multi_face_count = 0
-        first_no_face: Optional[FocusResultData] = None
-        first_multi_face: Optional[FocusResultData] = None
-
-        for f in anomaly_segment:
-            w = f.warn_msg
-            if w is None:
-                continue
-            if w.warn_type == "no_face":
-                no_face_count += 1
-                if first_no_face is None:
-                    first_no_face = f
-            elif w.warn_type == "multi_face":
-                multi_face_count += 1
-                if first_multi_face is None:
-                    first_multi_face = f
-
-        if no_face_count == 0 and multi_face_count == 0:
+        if not triggered_types:
             return None
-        if no_face_count > multi_face_count:
-            return first_no_face.warn_msg if first_no_face else None
-        if multi_face_count > no_face_count:
-            return first_multi_face.warn_msg if first_multi_face else None
-        # 占比相同：取先出现
-        first = anomaly_segment[0]
-        for f in anomaly_segment:
-            if f.warn_msg is not None:
-                first = f
-                break
-        # 直接在已排序段中找 warn_msg 不为空的第一个
-        for f in anomaly_segment:
-            if f.warn_msg is not None:
-                return f.warn_msg
+
+        winner_type = min(triggered_types, key=lambda t: alert_priority(t))
+
+        # 优先从输出帧的候选告警中匹配
+        for w in output_frame.warn_candidates:
+            if w.warn_type == winner_type:
+                return w
+
         return None
-
-
-    # ================================================================
-    # 数据库降采样
-    # ================================================================
-
-    def _pick_db_frame(
-        self,
-        normal_frames: List[FocusResultData],
-        anomaly_frames: List[FocusResultData],
-    ) -> Optional[FocusResultData]:
-        """
-        数据库降采样规则：
-        1. 窗口内统计异常帧占比
-        2. 异常占比 ≥ 0.5 → 存入窗口内第一个异常帧
-        3. 异常占比 < 0.5 → 存入规则与 UI 一致（normal 中选最接近均值的帧）
-        """
-        total = len(normal_frames) + len(anomaly_frames)
-        if total == 0:
-            return None
-
-        anomaly_ratio = len(anomaly_frames) / total
-
-        if anomaly_ratio >= 0.5:
-            sorted_anomaly = sorted(anomaly_frames, key=lambda f: f.timestamp)
-            return sorted_anomaly[0]
-        else:
-            if not normal_frames:
-                return None
-            mean_focus = sum(f.final_focus_score for f in normal_frames) / len(normal_frames)
-            return min(normal_frames, key=lambda f: abs(f.final_focus_score - mean_focus))
