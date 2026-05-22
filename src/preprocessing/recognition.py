@@ -18,7 +18,7 @@ class FaceEmbeddingExtractor:
 
     def __init__(
         self,
-        model_path: str | Path = "weights/w600k_mbf.onnx",
+        model_path: str | Path = "weights/w600k_r50.onnx",
         fallback_size: Tuple[int, int] = (16, 32),
     ):
         self.fallback_size = fallback_size
