@@ -415,6 +415,7 @@ class MainWindow(QMainWindow):
         self.top_nav.set_mode_buttons_enabled(True)
         self.top_nav_query.set_mode_buttons_enabled(True)
         self.left_sidebar.set_faces_enabled(True)
+        self.right_panel.reset_button_state()
         self.right_panel.reset_scores()
 
     def on_camera_selected(self, device_id: int):
@@ -430,9 +431,12 @@ class MainWindow(QMainWindow):
         self._current_source_type = "file"
 
     def _on_file_playback_ended(self, file_path: str):
-        """文件播放完成回调 — 自动执行停止 session 流程"""
+        """文件播放完成回调 — 自动执行停止 session 流程
+
+        注意：此回调可能从预处理工作线程被调用，
+        使用 QTimer.singleShot 将所有 Qt 操作调度到主线程执行。"""
         print(f"[MainWindow] 文件播放完成，自动停止: {file_path}")
-        self.on_stop_analysis()
+        QTimer.singleShot(0, self.on_stop_analysis)
 
     def on_refresh_camera_list(self):
         """刷新摄像头列表"""

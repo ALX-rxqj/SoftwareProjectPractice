@@ -219,6 +219,10 @@ CLAUDE.md
 .agents/
 skills-lock.json
 
+# 压力测试日志
+test/stress_logs/
+test/data/
+
 # 模型
 weights/
 

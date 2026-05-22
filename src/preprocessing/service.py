@@ -125,7 +125,7 @@ class PreprocessingService:
 
     def stop(self) -> Dict[str, Any]:
         self._stop_event.set()
-        if self._worker and self._worker.is_alive():
+        if self._worker and self._worker.is_alive() and threading.current_thread() is not self._worker:
             self._worker.join(timeout=2.0)
         self._worker = None
         self._file_playback_started_at = None
