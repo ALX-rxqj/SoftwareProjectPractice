@@ -137,8 +137,8 @@ class DataRecordWidget(QFrame):
 
             session_id = session.get("session_id", "")
             face_id = session.get("face_id", "")
-            start_time = session.get("start_time", "")
-            end_time = session.get("end_time", "")
+            start_time = session.get("start_time") or ""
+            end_time = session.get("end_time") or ""
             mode = {"class": "网课模式", "exam": "考试模式"}.get(
                 session.get("mode", ""), session.get("mode", "")
             )
