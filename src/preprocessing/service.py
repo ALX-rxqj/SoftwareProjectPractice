@@ -61,7 +61,7 @@ class PreprocessingService:
         self._progress_callback("加载人脸识别模型...", 0.6)
 
         self._registration_detector: Optional[FaceDetector] = None
-        self._match_threshold = 0.6
+        self._match_threshold = 0.45
         self._last_owner_face_id: Any = -1
         self._playback_rate = 1.0
         self._file_playback_started_at: Optional[float] = None
@@ -279,7 +279,12 @@ class PreprocessingService:
                 context=context,
             ).to_dict()
             feature_packet = self._build_feature_packet(
-                result["frame"], result["timestamp"], matched_faces, owner_face_id, owner_face_matched
+                result["frame"],
+                result["original_frame"],
+                result["timestamp"],
+                matched_faces,
+                owner_face_id,
+                owner_face_matched
             ).to_dict()
             self._log_recognition_result(feature_packet)
             self._dispatch_ui_packet(ui_packet)
@@ -609,6 +614,7 @@ class PreprocessingService:
     def _build_feature_packet(
         self,
         frame: np.ndarray,
+        original_frame: np.ndarray,
         timestamp: float,
         faces: Sequence[MatchedFace],
         owner_face_id: Any,
@@ -629,6 +635,7 @@ class PreprocessingService:
             faces=feature_faces,
             owner_face_id=owner_face_id,
             frame=frame,
+            original_frame=original_frame,
             face_matched=owner_face_matched,
         )
 

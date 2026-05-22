@@ -90,7 +90,7 @@ record = {
         }
     ],
     "owner_face_id": "face_xxx",
-    "frame": frame,
+    "original_frame": frame,  # 改用original_frame（原始摄像头帧）
     "face_matched": True
 }
 
@@ -101,38 +101,46 @@ def send_to_scoring(output):
 io.process(record, send_to_scoring)
 ```
 
+**说明：**
+- `IOInterface` 不再依赖预处理的 faces 列表
+- 从 `original_frame` 自主进行人脸检测、关键点提取、
+- 输入格式保持原样，只需将 `frame` 改为`original_frame`
+- 输出格式保持不变（见下方 "输出接口"）
+
 ### 批量处理
 
 ```python
 from io_interface import process_batch, IOInterface
 
-records = [record1, record2, record3]
+records = [
+    {
+        "timestamp": 1734567890.123,
+        "faces": [...],           # 可选：预处理检测的人脸列表（不再使用）
+        "owner_face_id": "face_xxx",
+        "original_frame": frame1,  # 原始摄像头帧
+        "face_matched": True
+    },
+    {
+        "timestamp": 1734567890.200,
+        "faces": [...],
+        "owner_face_id": "face_yyy",
+        "original_frame": frame2,
+        "face_matched": True
+    }
+]
+
+def send_to_scoring(output):
+    print(output)
+
 process_batch(records, send_to_scoring)
 ```
 
-输入字典需要符合结构：
-
-```python
-{
-    "timestamp": float,
-    "faces": [
-        {"face_id": "face_xxx", "student_name": "Alice", "face_roi": face_img1, "confidence": 0.91, "face_matched": True},
-        {"face_id": "face_yyy", "student_name": "Bob", "face_roi": face_img2, "confidence": 0.85, "face_matched": False}
-    ],
-    "owner_face_id": "face_xxx",
-    "frame": frame,
-    "face_matched": True
-}
-```
-
-其中：
-
-- `faces` 是所有人脸信息，每项包含 `face_id`、`student_name`、`face_roi`、`confidence` 和 `face_matched`
-- `owner_face_id` 是主人脸 ID
-- `frame` 是原始视频帧（BGR）
-- `face_matched` 是顶层人脸匹配状态（转发字段，无需处理）
-
-`process_feature_packet` 会返回完整输出字典，并且支持把结果回调到 `send_to_scoring(output)`。
+输入字典结构说明：
+- `timestamp`：帧的时间戳（浮点数）
+- `faces`：预处理检测的人脸列表（可选，IOInterface 不使用）
+- `owner_face_id`：主人脸ID（任意类型，会在输出中原样返回）
+- `original_frame`：原始摄像头帧（numpy数组，BGR格式）
+- `face_matched`：人脸匹配状态（可选，会在输出中原样返回）
 
 ## 输出接口
 

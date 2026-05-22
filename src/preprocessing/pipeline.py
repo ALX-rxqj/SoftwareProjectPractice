@@ -234,6 +234,7 @@ class PreprocessingPipeline:
             self.stats.consecutive_failures = 0
             return {
                 "frame": frame,
+                "original_frame": context.frame,  # 保存原始帧
                 "timestamp": context.timestamp,
                 "tracked_faces": tracked_faces,
             }
