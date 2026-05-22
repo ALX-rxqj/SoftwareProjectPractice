@@ -78,6 +78,7 @@ class FeatureFramePacket:
     faces: List[Dict[str, Any]]
     owner_face_id: Any
     frame: np.ndarray
+    original_frame: np.ndarray  # 添加原始帧（未经预处理）
     face_matched: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
@@ -86,6 +87,7 @@ class FeatureFramePacket:
             "faces": self.faces,
             "owner_face_id": self.owner_face_id,
             "frame": self.frame,
+            "original_frame": self.original_frame,  # ✅ 添加此行
             "face_matched": self.face_matched,
         }
 

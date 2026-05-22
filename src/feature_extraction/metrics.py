@@ -56,8 +56,11 @@ def _mouth_aspect_ratio(marks):
 def _estimate_eye_state(marks):
     ear = _compute_ear(marks)["value"]
 
-    closed_score = _clip01((0.26 - ear) / 0.10)
-    if closed_score >= 0.35:
+    # 调整阈值：降低敏感度，减少误判
+    # 原值：closed_score = (0.26 - ear) / 0.10，阈值 >= 0.35
+    # 新值：使用更宽松的标准
+    closed_score = _clip01((0.20 - ear) / 0.12)
+    if closed_score >= 0.25:
         return {"value": 1, "confidence": closed_score}
     return {"value": 0, "confidence": _clip01(1.0 - closed_score)}
 
@@ -133,15 +136,33 @@ def _estimate_attention_state(eye_state, is_looking_screen, face_distance_state,
     return {"value": 0, "confidence": confidence}
 
 
-def _estimate_yawning_state(marks, threshold=0.2, margin=0.20):
+def _estimate_yawning_state(marks, head_pose=None, threshold=0.25, margin=0.10):
     """估计是否打哈欠，以及该判断的可信度。
 
     value: bool，是否打哈欠
     confidence: float，对当前判定结果的把握度，越远离阈值越高。
+    
+    侧脸时自动禁用判别，避免误判。
     """
+    # 侧脸检测：如果yaw角度 > 20度，说明是侧脸，禁用打哈欠检测
+    if head_pose is not None and "yaw" in head_pose:
+        yaw = abs(head_pose.get("yaw", 0))
+        if yaw > 30:  # 侧脸角度过大，不判别
+            return {"value": False, "confidence": 0.0}
+    
     mar = _mouth_aspect_ratio(marks)
     value = bool(mar >= threshold)
-    confidence = _clip01(abs(mar - threshold) / max(margin, 1e-6))
+    
+    # 改进置信度计算：添加基础置信度，提高整体置信度水平
+    if value:
+        # 张嘴时：基础置信度 0.4 + 增益 [0, 0.6]
+        relative_conf = _clip01((mar - threshold) / max(margin, 1e-6))
+        confidence = _clip01(0.4 + 0.6 * relative_conf)
+    else:
+        # 没张嘴时：基础置信度 0.3 + 增益 [0, 0.7]
+        relative_conf = _clip01((threshold - mar) / max(margin * 2, 1e-6))
+        confidence = _clip01(0.6 + 0.4 * relative_conf)
+    
     return {"value": value, "confidence": confidence}
 
 

@@ -17,7 +17,6 @@ from .mark_detection import MarkDetector
 from .pose_estimation import PoseEstimator
 from .utils import refine
 
-# 为了复用 main 中的注意力/张嘴/闭眼等算法，安全导入这些函数
 from .metrics import (
     _build_default_output,
     _build_prompt_output,
@@ -73,115 +72,118 @@ class IOInterface:
     def process(self, record: Dict[str, Any], send_to_scoring: Callable[[Dict[str, Any]], None],
                 mark_threshold: float = 0.5) -> None:
         """处理单条输入并通过 `send_to_scoring` 回调结果。
+        
+        完全按照main.py的逻辑处理原始帧：
+        1. 从原始帧中检测人脸
+        2. 提取关键点
+        3. 计算所有特征
 
-        输入 record 示例：
+        输入 record 示例（注意：faces列表不再被使用）：
         {
             "timestamp": 12345.6,
-            "faces": [{"face_id":1, "face_roi": face_img}, ...],
-            "owner_face_id": 1,
-            "frame": frame
+            "faces": [...],           # 可选，不被使用
+            "owner_face_id": track_id,
+            "original_frame": frame,  # 原始摄像头帧
+            "face_matched": True      # 可选，会被转发到输出
         }
 
         """
         timestamp = float(record.get('timestamp', 0.0))
-        faces = record.get('faces', []) or []
-        owner_face_id = record.get('owner_face_id')  # 保持原始类型（串称下整数）
-        frame = record.get('frame', None)
+        owner_face_id = record.get('owner_face_id')
+        original_frame = record.get('original_frame', None)
         face_matched = record.get('face_matched', False)
 
-        if frame is None:
-            # 没有原始帧时仍继续，但 pose_estimator 需要 frame 来构造相机参数
-            frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        # 使用原始帧作为处理帧
+        if original_frame is None:
+            original_frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
-        self._ensure_pose_estimator(frame)
+        # 初始化PoseEstimator
+        self._ensure_pose_estimator(original_frame)
 
-        # 统计人脸数目
+        # 第一步：从原始帧中检测人脸
+        faces, _ = self.face_detector.detect(original_frame, 0.7)
         num_face_total = len(faces)
 
-        # 找到主人脸的 face_roi
-        owner_face = None
-        for f in faces:
-            if f.get('face_id') == owner_face_id:
-                owner_face = f
-                break
+        # 是否检测到有效人脸
+        if len(faces) > 0:
+            # 第二步：选择主人脸并检测关键点
+            frame_height, frame_width = original_frame.shape[0], original_frame.shape[1]
+            face = refine(faces, frame_width, frame_height, 0.15)[0]
+            x1, y1, x2, y2 = face[:4].astype(int)
+            
+            try:
+                # 从原始帧中裁剪人脸区域
+                patch = original_frame[y1:y2, x1:x2]
+                
+                # 执行关键点检测
+                marks = self.mark_detector.detect([patch])[0].reshape([68, 2])
+                
+                # 将局部人脸区域中的坐标转换回整张图像坐标
+                marks[:, 0] += x1
+                marks[:, 1] += y1
+            except Exception:
+                marks = np.zeros((68, 2), dtype=np.float32)
 
-        if owner_face is None:
-            # 如果没有找到主人脸，返回空结果（可按需修改）
+            # 第三步：利用68个关键点估计头部姿态
+            try:
+                pose = self.pose_estimator.solve(marks)
+                head_pose = self.pose_estimator.get_head_pose_data(marks, pose)["head_pose"]
+            except Exception:
+                head_pose = {'pitch': 0.0, 'yaw': 0.0, 'roll': 0.0, 'confidence': 0.0}
+
+            # 估计眼睛状态
+            try:
+                eye_state = _estimate_eye_state(marks)
+            except Exception:
+                eye_state = {'value': 0, 'confidence': 0.0}
+
+            # 估计是否看屏幕
+            try:
+                is_looking_screen = _estimate_looking_screen(head_pose, eye_state)
+            except Exception:
+                is_looking_screen = {'value': False, 'confidence': 0.0}
+
+            # 估计人脸距离状态
+            face_distance_state = _estimate_face_distance_state(
+                face_box=face[:4],
+                frame_shape=original_frame.shape,
+            )
+
+            # 估计打哈欠状态
+            try:
+                is_yawning = _estimate_yawning_state(marks, head_pose=head_pose)
+            except Exception:
+                is_yawning = {'value': False, 'confidence': 0.0}
+
+            # 估计注意力状态
+            attention_state = _estimate_attention_state(
+                eye_state,
+                is_looking_screen,
+                face_distance_state,
+                is_yawning,
+                face_present=True,
+            )
+
+            output = _build_prompt_output(
+                timestamp,
+                owner_face_id,
+                head_pose,
+                eye_state,
+                is_looking_screen,
+                attention_state,
+                face_distance_state,
+                is_yawning,
+                int(num_face_total),
+                face_matched=face_matched,
+            )
+        else:
+            # 没有检测到人脸，返回默认输出
             output = _build_default_output(owner_face_id, face_matched=face_matched)
             output['timestamp'] = timestamp
-            output['features']['num_face_total'] = {'value': num_face_total, 'confidence': 1.0}
-            send_to_scoring(output)
-            return
-
-        face_roi = owner_face.get('face_roi')
-        if face_roi is None:
-            # 如果没有直接提供 face_roi，尝试用 bounding box 从 frame 裁剪
-            bbox = owner_face.get('bbox') or owner_face.get('face_bbox')
-            if bbox is not None and frame is not None:
-                x1, y1, x2, y2 = map(int, bbox[:4])
-                face_roi = frame[y1:y2, x1:x2].copy()
-            else:
-                # 兜底：把整个帧当作 face_roi
-                face_roi = frame.copy()
-
-        # 调用关键点检测
-        try:
-            raw_marks = self.mark_detector.detect([face_roi])
-            marks = self._parse_marks(raw_marks)
-        except Exception:
-            # 若关键点失败，使用空占位
-            marks = np.zeros((68, 2), dtype=np.float32)
-
-        # 调用姿态估计
-        try:
-            pose = self.pose_estimator.solve(marks)
-            head_pose = self.pose_estimator.get_head_pose_data(marks, pose=pose).get('head_pose', {})
-        except Exception:
-            head_pose = {'pitch': 0.0, 'yaw': 0.0, 'roll': 0.0, 'confidence': 0.0}
-
-        # 使用 main.py 中的算法估计眼睛/注视/打哈欠等
-        try:
-            eye_state = _estimate_eye_state(marks)
-        except Exception:
-            eye_state = {'value': 0, 'confidence': 0.0}
-
-        try:
-            is_looking_screen = _estimate_looking_screen(head_pose, eye_state)
-        except Exception:
-            is_looking_screen = {'value': False, 'confidence': 0.0}
-
-        face_distance_state = _estimate_face_distance_state(
-            face_box=owner_face.get('bbox') or owner_face.get('face_bbox'),
-            frame_shape=frame.shape,
-            face_roi_shape=face_roi.shape,
-        )
-
-        # 使用 mouth aspect ratio 判断是否打哈欠，confidence 表示对该判断的把握度
-        try:
-            is_yawning = _estimate_yawning_state(marks)
-        except Exception:
-            is_yawning = {'value': False, 'confidence': 0.0}
-
-        attention_state = _estimate_attention_state(
-            eye_state,
-            is_looking_screen,
-            face_distance_state,
-            is_yawning,
-            face_present=True,
-        )
-
-        output = _build_prompt_output(
-            timestamp,
-            owner_face_id,
-            head_pose,
-            eye_state,
-            is_looking_screen,
-            attention_state,
-            face_distance_state,
-            is_yawning,
-            num_face_total,
-            face_matched=face_matched,
-        )
+            output['features']['num_face_total'] = {
+                'value': int(num_face_total),
+                'confidence': float(np.clip(1.0 if num_face_total > 0 else 0.0, 0.0, 1.0)),
+            }
 
         send_to_scoring(output)
 

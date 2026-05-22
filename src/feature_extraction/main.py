@@ -9,6 +9,7 @@
 """
 from argparse import ArgumentParser
 import time
+import os
 
 import cv2
 import numpy as np
@@ -48,6 +49,10 @@ def send_to_scoring(output):
 
 def run():
     # 在开始估计前，先做一些初始化工作。
+    
+    # 获取模型文件的绝对路径
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    assets_dir = os.path.join(script_dir, "assets")
 
     # 初始化视频源，来源可以是摄像头或视频文件。
     video_src = args.cam if args.video is None else args.video
@@ -59,10 +64,10 @@ def run():
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     # 初始化人脸检测器。
-    face_detector = FaceDetector("assets/face_detector.onnx")
+    face_detector = FaceDetector(os.path.join(assets_dir, "face_detector.onnx"))
 
     # 初始化关键点检测器。
-    mark_detector = MarkDetector("assets/face_landmarks.onnx")
+    mark_detector = MarkDetector(os.path.join(assets_dir, "face_landmarks.onnx"))
 
     # 初始化姿态估计器。
     pose_estimator = PoseEstimator(frame_width, frame_height)
@@ -116,7 +121,7 @@ def run():
                 face_box=face[:4],
                 frame_shape=frame.shape,
             )
-            is_yawning = _estimate_yawning_state(marks)
+            is_yawning = _estimate_yawning_state(marks, head_pose=head_pose)
             attention_state = _estimate_attention_state(
                 eye_state,
                 is_looking_screen,
