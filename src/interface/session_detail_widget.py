@@ -233,8 +233,7 @@ class SessionDetailWidget(QFrame):
                 "expression": False, "evidence": False, "people": False,
             }
 
-        sampled = self._downsample(records, 60)
-        n = len(sampled)
+        n = len(records)
 
         if n == 0:
             ax.text(0.5, 0.5, "暂无数据", ha="center", va="center",
@@ -243,7 +242,8 @@ class SessionDetailWidget(QFrame):
             self.canvas.draw()
             return
 
-        x = [r.get("timestamp", 0) for r in sampled]
+        t0 = records[0].get("timestamp", 0) if records else 0
+        x = [r.get("timestamp", 0) - t0 for r in records]
 
         line_configs = [
             ("final_focus", "最终专注度", cc[0], 2.5),
@@ -257,7 +257,7 @@ class SessionDetailWidget(QFrame):
         for key, label, color, lw in line_configs:
             if chart_options.get(key):
                 ax.plot(x, [r.get(f"{key}_score" if key != "final_focus" else "final_focus_score", 0)
-                         for r in sampled],
+                         for r in records],
                         label=label, color=color, linewidth=lw,
                         linestyle="-" if key == "final_focus" else "--")
 
@@ -278,14 +278,29 @@ class SessionDetailWidget(QFrame):
             fontsize=9,
         )
 
+        self._ax = ax
+        self._scroll_cid = self.canvas.mpl_connect("scroll_event", self._on_scroll)
         self.canvas.draw()
 
-    def _downsample(self, records: list, max_samples: int) -> list:
-        n = len(records)
-        if n <= max_samples:
-            return records
-        step = n // max_samples
-        return records[::step][:max_samples]
+    def _on_scroll(self, event):
+        ax = getattr(self, "_ax", None)
+        if ax is None or event.xdata is None or event.ydata is None:
+            return
+        base_scale = 1.2
+        cur_xlim = ax.get_xlim()
+        cur_ylim = ax.get_ylim()
+        scale_factor = 1 / base_scale if event.button == "up" else base_scale
+        relx = (cur_xlim[1] - event.xdata) / (cur_xlim[1] - cur_xlim[0])
+        rely = (cur_ylim[1] - event.ydata) / (cur_ylim[1] - cur_ylim[0])
+        ax.set_xlim([
+            event.xdata - (cur_xlim[1] - cur_xlim[0]) * scale_factor * (1 - relx),
+            event.xdata + (cur_xlim[1] - cur_xlim[0]) * scale_factor * relx,
+        ])
+        ax.set_ylim([
+            event.ydata - (cur_ylim[1] - cur_ylim[0]) * scale_factor * (1 - rely),
+            event.ydata + (cur_ylim[1] - cur_ylim[0]) * scale_factor * rely,
+        ])
+        self.canvas.draw_idle()
 
     def _on_alert_info_clicked(self):
         if self.current_session:

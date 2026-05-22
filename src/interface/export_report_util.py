@@ -7,7 +7,6 @@ import tempfile
 from io import BytesIO
 from typing import List, Dict, Any
 
-import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -26,8 +25,7 @@ def _generate_focus_chart_image(records: list) -> BytesIO:
 
     cc = COLORS["chart_colors"]
 
-    sampled = _downsample(records, 60)
-    n = len(sampled)
+    n = len(records)
     if n == 0:
         ax.text(0.5, 0.5, "No data", ha="center", va="center", fontsize=14)
         buf = BytesIO()
@@ -36,7 +34,8 @@ def _generate_focus_chart_image(records: list) -> BytesIO:
         plt.close(fig)
         return buf
 
-    x = np.arange(n)
+    t0 = records[0].get("timestamp", 0) if records else 0
+    x = [r.get("timestamp", 0) - t0 for r in records]
 
     line_configs = [
         ("final_focus_score", "最终专注度", cc[0], 2.5),
@@ -48,12 +47,12 @@ def _generate_focus_chart_image(records: list) -> BytesIO:
     ]
 
     for key, label, color, lw in line_configs:
-        ax.plot(x, [r.get(key, 0) for r in sampled],
+        ax.plot(x, [r.get(key, 0) for r in records],
                 label=label, color=color, linewidth=lw,
                 linestyle="-" if key == "final_focus_score" else "--")
 
     ax.set_title("专注度评分变化趋势", fontsize=14, color="#333333")
-    ax.set_xlabel("采样点", fontsize=10, color="#666666")
+    ax.set_xlabel("时间 (秒)", fontsize=10, color="#666666")
     ax.set_ylabel("评分", fontsize=10, color="#666666")
     ax.set_ylim(0, 120)
     ax.grid(True, linestyle="--", alpha=0.3)
@@ -69,14 +68,6 @@ def _generate_focus_chart_image(records: list) -> BytesIO:
     buf.seek(0)
     plt.close(fig)
     return buf
-
-
-def _downsample(records: list, max_samples: int) -> list:
-    n = len(records)
-    if n <= max_samples:
-        return records
-    step = n // max_samples
-    return records[::step][:max_samples]
 
 
 def export_to_excel(session: dict, records: list, alerts: list, filepath: str):
@@ -241,7 +232,6 @@ def export_to_pdf(session: dict, records: list, alerts: list, filepath: str):
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm, cm
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT
     from reportlab.lib.colors import HexColor, black, white
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
@@ -276,11 +266,6 @@ def export_to_pdf(session: dict, records: list, alerts: list, filepath: str):
         fontName="MicrosoftYaHei", fontSize=10, leading=16,
         textColor=HexColor("#333333"),
     )
-    center_style = ParagraphStyle(
-        "ChCenter", parent=body_style,
-        alignment=TA_CENTER,
-    )
-
     session_id = session.get("session_id", "")
     start_time = session.get("start_time", "")
     end_time = session.get("end_time", "")
@@ -346,7 +331,7 @@ def export_to_pdf(session: dict, records: list, alerts: list, filepath: str):
     # 记录表格（取前 30 条摘要避免过长）
     table_headers = ["时间戳", "头部姿态", "行为动作", "表情", "证据理论", "人数项", "最终专注度"]
     table_data = [table_headers]
-    display_records = records[:30]
+    display_records = records
     for r in display_records:
         table_data.append([
             f"{r.get('timestamp', 0):.1f}s",
@@ -374,10 +359,6 @@ def export_to_pdf(session: dict, records: list, alerts: list, filepath: str):
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
     elements.append(record_table)
-
-    if len(records) > 30:
-        elements.append(Paragraph(f"... 共 {len(records)} 条，仅显示前 30 条", center_style))
-
     elements.append(Spacer(1, 5 * mm))
 
     # 专注度趋势图
