@@ -34,6 +34,11 @@ class PipelineConfig:
     target_brightness: float = 128.0
     min_gamma: float = 0.75
     max_gamma: float = 1.35
+    enable_quality_gating: bool = True
+    min_face_brightness: float = 35.0
+    max_face_brightness: float = 235.0
+    min_brightness_std: float = 8.0
+    min_laplacian_var: float = 20.0
 
 
 class IlluminationNormalizer:
@@ -70,18 +75,82 @@ class IlluminationNormalizer:
         gain = self._target_brightness / max(brightness, 1.0)
         gain = float(np.clip(gain, self._min_gamma, self._max_gamma))
         corrected_v = np.clip(v_channel.astype(np.float32) * gain, 0, 255).astype(np.uint8)
+
+        v_std = float(corrected_v.std())
+        if v_std < 15.0:
+            v_min, v_max = np.percentile(corrected_v, [2, 98])
+            if v_max - v_min > 1:
+                corrected_v = np.clip(
+                    (corrected_v.astype(np.float32) - v_min) * 255.0 / (v_max - v_min),
+                    0, 255,
+                ).astype(np.uint8)
+
         return cv2.cvtColor(
             cv2.merge((h_channel, s_channel, corrected_v)),
             cv2.COLOR_HSV2BGR,
         )
 
 
+@dataclass(frozen=True)
+class FaceQualityResult:
+    is_acceptable: bool
+    brightness_mean: float
+    brightness_std: float
+    laplacian_var: float
+    rejection_reason: str = ""
+
+
+class FaceQualityAssessor:
+    """人脸 ROI 质量门控：过滤过暗/过曝/平坦/模糊的人脸，避免无效特征提取。
+
+    对已归一化的 224x224 BGR 人脸 ROI 进行四重检查，
+    质量不合格的人脸将被跳过，不进入嵌入提取和识别流程。
+    """
+
+    def __init__(self, config: PipelineConfig):
+        self._enabled = config.enable_quality_gating
+        self._min_brightness = float(config.min_face_brightness)
+        self._max_brightness = float(config.max_face_brightness)
+        self._min_std = float(config.min_brightness_std)
+        self._min_lap_var = float(config.min_laplacian_var)
+
+    def assess(self, face_roi: np.ndarray) -> FaceQualityResult:
+        if face_roi is None or face_roi.size == 0:
+            return FaceQualityResult(False, 0.0, 0.0, 0.0, "empty_roi")
+        if not self._enabled:
+            return FaceQualityResult(True, 0.0, 0.0, 0.0)
+
+        gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+        brightness_mean = float(gray.mean())
+        brightness_std = float(gray.std())
+        laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+        if brightness_mean < self._min_brightness:
+            return FaceQualityResult(False, brightness_mean, brightness_std,
+                                     laplacian_var, "too_dark")
+        if brightness_mean > self._max_brightness:
+            return FaceQualityResult(False, brightness_mean, brightness_std,
+                                     laplacian_var, "overexposed")
+        if brightness_std < self._min_std:
+            return FaceQualityResult(False, brightness_mean, brightness_std,
+                                     laplacian_var, "flat")
+        if laplacian_var < self._min_lap_var:
+            return FaceQualityResult(False, brightness_mean, brightness_std,
+                                     laplacian_var, "blurry")
+        return FaceQualityResult(True, brightness_mean, brightness_std, laplacian_var)
+
+    def is_acceptable(self, face_roi: np.ndarray) -> bool:
+        return self.assess(face_roi).is_acceptable
+
+
 class FaceDetector:
     def __init__(self, min_face_size: int, roi_normalizer: Optional[IlluminationNormalizer] = None,
+                 quality_assessor: Optional[FaceQualityAssessor] = None,
                  yolo_model_path: str | Path = "weights/yolov8-face.pt",
                  yolo_model: Any = None, mtcnn: Any = None):
         self.min_face_size = min_face_size
         self._roi_normalizer = roi_normalizer
+        self._quality_assessor = quality_assessor
         if yolo_model is not None:
             self._yolo = yolo_model
         else:
@@ -134,6 +203,8 @@ class FaceDetector:
                 continue
             bbox = self._clip_bbox((x1, y1, w, h), frame.shape)
             face_roi = self._extract_roi(frame, bbox, roi_size, self._roi_normalizer)
+            if not self._should_keep_face(face_roi):
+                continue
             detections.append(
                 DetectionResult(
                     bbox=bbox,
@@ -153,6 +224,8 @@ class FaceDetector:
                 continue
             bbox = self._clip_bbox((x, y, w, h), frame.shape)
             face_roi = self._extract_roi(frame, bbox, roi_size, self._roi_normalizer)
+            if not self._should_keep_face(face_roi):
+                continue
             detections.append(
                 DetectionResult(
                     bbox=bbox,
@@ -169,8 +242,18 @@ class FaceDetector:
         for x, y, w, h in faces:
             bbox = self._clip_bbox((int(x), int(y), int(w), int(h)), frame.shape)
             face_roi = self._extract_roi(frame, bbox, roi_size, self._roi_normalizer)
+            if not self._should_keep_face(face_roi):
+                continue
             detections.append(DetectionResult(bbox=bbox, confidence=0.6, face_roi=face_roi))
         return detections
+
+    def _should_keep_face(self, face_roi: np.ndarray) -> bool:
+        """质量不合格的人脸 ROI 返回 False，调用方应跳过该检测。"""
+        if face_roi is None or face_roi.size == 0:
+            return False
+        if self._quality_assessor is not None:
+            return self._quality_assessor.is_acceptable(face_roi)
+        return True
 
     @staticmethod
     def _clip_bbox(bbox: Tuple[int, int, int, int], shape: Tuple[int, ...]) -> Tuple[int, int, int, int]:
@@ -205,9 +288,11 @@ class PreprocessingPipeline:
         self.logger = logger or (lambda message: None)
         self.stats = PreprocessingStats()
         self._illumination_normalizer = IlluminationNormalizer(self.config)
+        self._quality_assessor = FaceQualityAssessor(self.config)
         self._detector = FaceDetector(
             self.config.min_face_size,
             roi_normalizer=self._illumination_normalizer,
+            quality_assessor=self._quality_assessor,
         )
         self._tracker = SimpleFaceTracker()
         self._liveness = HeuristicLivenessDetector()
@@ -251,12 +336,12 @@ class PreprocessingPipeline:
         self.logger("Preprocessing pipeline recovered after consecutive failures")
 
     def _normalize_frame(self, frame: np.ndarray) -> Optional[np.ndarray]:
+        """仅做分辨率归一化。光照归一化在 FaceDetector._extract_roi 中对人脸 ROI 单独执行。"""
         if frame is None or not isinstance(frame, np.ndarray) or frame.size == 0:
             return None
         normalized = cv2.resize(frame, self.config.frame_size)
         if normalized.ndim == 2:
             normalized = cv2.cvtColor(normalized, cv2.COLOR_GRAY2BGR)
-        normalized = self._illumination_normalizer.apply(normalized)
         return normalized
 
     def _apply_liveness(self, tracked_faces: Sequence[TrackedFace]) -> List[TrackedFace]:

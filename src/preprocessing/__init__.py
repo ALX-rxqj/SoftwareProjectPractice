@@ -1,6 +1,6 @@
 from .contracts import FeatureFramePacket, FrameContext, MatchedFace, PreprocessingStats, TrackedFace, UIFramePacket
 from .database_backend import PreprocessingDatabaseBackend
-from .pipeline import PipelineConfig, PreprocessingPipeline
+from .pipeline import FaceQualityAssessor, FaceQualityResult, PipelineConfig, PreprocessingPipeline
 from .recognition import FaceEmbeddingExtractor, cosine_similarity
 from .service import PreprocessingCommandAdapter, PreprocessingService
 
@@ -12,6 +12,8 @@ __all__ = [
     "PreprocessingStats",
     "TrackedFace",
     "UIFramePacket",
+    "FaceQualityAssessor",
+    "FaceQualityResult",
     "PipelineConfig",
     "PreprocessingPipeline",
     "FaceEmbeddingExtractor",

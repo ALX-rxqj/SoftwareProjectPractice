@@ -472,6 +472,8 @@ class PreprocessingService:
             yolo_model = self.pipeline._detector._yolo
             self._registration_detector = FaceDetector(
                 self.pipeline.config.min_face_size,
+                roi_normalizer=self.pipeline._illumination_normalizer,
+                quality_assessor=self.pipeline._quality_assessor,
                 yolo_model=yolo_model,
             )
         return self._registration_detector
@@ -487,6 +489,8 @@ class PreprocessingService:
             detections = self._get_registration_detector().detect(frame, self.pipeline.config.roi_size)
             best = self._pick_best_detection(detections, frame.shape)
             if best is None:
+                continue
+            if best.face_roi is None or best.face_roi.size == 0:
                 continue
             embedding = self._embedding_extractor.extract(best.face_roi)
             if embedding is None:
