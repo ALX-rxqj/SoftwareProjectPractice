@@ -1,5 +1,6 @@
 from enum import Enum
 
+import cv2
 from PyQt5.QtCore import (
     Qt, QTimer, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint,
 )
@@ -236,13 +237,20 @@ class VideoWidget(QFrame):
         self.current_frame_data = None
         self._show_face_boxes = False
         self._current_face_boxes = []
+        self._render_pending = False
         self.init_ui()
         self._render_requested.connect(self._do_render)
 
     def render_frame(self, data):
-        """子线程安全：仅存储数据并 emit 信号，实际渲染由主线程 _do_render 执行"""
+        """子线程安全：仅存储数据并 emit 信号，实际渲染由主线程 _do_render 执行。
+
+        如果上一帧还未渲染完成则跳过当前帧，避免主线程事件队列积压。
+        """
         if not self.is_running:
             return
+        if self._render_pending:
+            return
+        self._render_pending = True
         self.current_frame_data = data
         self._current_face_boxes = list(data.faces) if data.faces else []
         self.frame_updated.emit({
@@ -253,6 +261,7 @@ class VideoWidget(QFrame):
 
     def _do_render(self, data):
         """在主线程执行 Qt 渲染操作"""
+        self._render_pending = False
         if not self.is_running:
             return
         self.update_frame(data)
@@ -272,29 +281,62 @@ class VideoWidget(QFrame):
             return
         try:
             if len(frame.shape) == 3 and frame.shape[2] == 3:
-                rgb_frame = frame[:, :, ::-1]
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 h, w, ch = rgb_frame.shape
-                qt_image = QImage(rgb_frame.data.tobytes(), w, h, ch * w, QImage.Format_RGB888)
+                qt_image = QImage(rgb_frame.data, w, h, ch * w, QImage.Format_RGB888)
                 pixmap = QPixmap.fromImage(qt_image)
                 scaled_pixmap = pixmap.scaled(
                     self.video_label.width(), self.video_label.height(),
-                    Qt.KeepAspectRatio, Qt.SmoothTransformation,
+                    Qt.KeepAspectRatio, Qt.FastTransformation,
                 )
 
                 if self._show_face_boxes and self._current_face_boxes:
                     painter = QPainter(scaled_pixmap)
-                    pen = QPen(QColor(COLORS["focus_high"]), 2)
-                    painter.setPen(pen)
                     scale_x = scaled_pixmap.width() / w
                     scale_y = scaled_pixmap.height() / h
+
                     for face in self._current_face_boxes:
                         bbox = face.get("bbox", [])
-                        if len(bbox) == 4:
-                            x, y, bw, bh = bbox
-                            painter.drawRect(
-                                int(x * scale_x), int(y * scale_y),
-                                int(bw * scale_x), int(bh * scale_y),
-                            )
+                        if len(bbox) != 4:
+                            continue
+                        x, y, bw, bh = bbox
+                        rx, ry = int(x * scale_x), int(y * scale_y)
+                        rw, rh = int(bw * scale_x), int(bh * scale_y)
+
+                        is_live = face.get("is_live", True)
+                        is_matched = face.get("face_matched", False)
+
+                        if not is_live:
+                            # 活体不通过 → 红色 + "伪造!"
+                            color = QColor(COLORS["focus_low"])
+                            label = "伪造!"
+                        elif not is_matched:
+                            # 识别不通过 → 黄色 + "未知"
+                            color = QColor(COLORS["focus_medium"])
+                            label = "未知"
+                        else:
+                            # 正常识别 → 绿色 + 姓名
+                            color = QColor(COLORS["focus_high"])
+                            label = face.get("student_name", "")
+
+                        # 边框
+                        pen = QPen(color, 2)
+                        painter.setPen(pen)
+                        painter.drawRect(rx, ry, rw, rh)
+
+                        # 标签背景 + 文字
+                        font = QFont(*get_font("xs", "bold", "ui"))
+                        painter.setFont(font)
+                        fm = painter.fontMetrics()
+                        label_w = max(fm.horizontalAdvance(label) + 12, 40)
+                        label_h = fm.height() + 4
+                        label_y = ry - label_h - 4
+                        if label_y < 0:
+                            label_y = ry + rh + 4
+                        painter.fillRect(rx, label_y, label_w, label_h, color)
+                        painter.setPen(QPen(QColor(255, 255, 255)))
+                        painter.drawText(rx + 4, label_y, label_w - 8, label_h,
+                                         Qt.AlignVCenter | Qt.AlignLeft, label)
                     painter.end()
 
                 self.video_label.setPixmap(scaled_pixmap)

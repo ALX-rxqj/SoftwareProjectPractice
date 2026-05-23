@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import queue
 import threading
 import time
 from pathlib import Path
@@ -65,6 +66,9 @@ class PreprocessingService:
         self._last_owner_face_id: Any = -1
         self._playback_rate = 1.0
         self._file_playback_started_at: Optional[float] = None
+        self._feature_queue: queue.Queue = queue.Queue(maxsize=2)
+        self._feature_worker: Optional[threading.Thread] = None
+        self._feature_worker_stop = threading.Event()
         self._initialize_database_backend()
         self._progress_callback("初始化数据库...", 0.9)
         self._progress_callback("预处理模块就绪", 1.0)
@@ -128,6 +132,18 @@ class PreprocessingService:
         if self._worker and self._worker.is_alive() and threading.current_thread() is not self._worker:
             self._worker.join(timeout=2.0)
         self._worker = None
+
+        # 排空特征队列中残留的帧
+        self._feature_worker_stop.set()
+        while not self._feature_queue.empty():
+            try:
+                self._feature_queue.get_nowait()
+            except queue.Empty:
+                break
+        if self._feature_worker and self._feature_worker.is_alive() and threading.current_thread() is not self._feature_worker:
+            self._feature_worker.join(timeout=3.0)
+        self._feature_worker = None
+
         self._file_playback_started_at = None
         self.video_source.close()
         self._active_source = None
@@ -227,6 +243,13 @@ class PreprocessingService:
         worker.start()
         return {"success": True, "face_id": face_id, "msg": "processing"}
 
+    def set_illumination_normalization(self, enabled: bool) -> None:
+        """运行时切换光照归一化。关闭可显著提升帧率，但弱光下人脸检测率可能下降。"""
+        self.pipeline.config.enable_illumination_normalization = enabled
+        self.log_callback(
+            f"光照归一化已{'启用' if enabled else '关闭'}（需重启采集生效）"
+        )
+
     def get_status(self) -> Dict[str, Any]:
         stats = self.pipeline.stats
         return {
@@ -245,10 +268,13 @@ class PreprocessingService:
 
     def _start_worker(self) -> None:
         self._stop_event.clear()
+        self._feature_worker_stop.clear()
         self.pipeline.reset()
         self._file_playback_started_at = None
         self._worker = threading.Thread(target=self._run_loop, name="PreprocessingWorker", daemon=True)
         self._worker.start()
+        self._feature_worker = threading.Thread(target=self._feature_loop, name="FeatureDispatchWorker", daemon=True)
+        self._feature_worker.start()
 
     def _run_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -313,10 +339,30 @@ class PreprocessingService:
                 )
 
     def _dispatch_feature_packet(self, feature_packet: Dict[str, Any]) -> None:
-        if self.feature_callback is not None:
-            self.feature_callback(feature_packet)
-        if self.frame_received_callback is not None:
-            self.frame_received_callback(feature_packet)
+        """非阻塞入队：将特征包放入队列由独立线程消费，避免阻塞预处理主循环。"""
+        try:
+            self._feature_queue.put_nowait(feature_packet)
+        except queue.Full:
+            pass  # 队列满则丢弃旧帧，优先保证预处理主循环流畅
+
+    def _feature_loop(self) -> None:
+        """独立线程：从队列消费特征包，调用特征提取和状态估计回调。
+
+        与预处理主循环并行运行，确保预处理帧率和 UI 显示不受
+        MediaPipe 推理和评分计算的阻塞。
+        """
+        while not self._feature_worker_stop.is_set():
+            try:
+                feature_packet = self._feature_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                if self.feature_callback is not None:
+                    self.feature_callback(feature_packet)
+                if self.frame_received_callback is not None:
+                    self.frame_received_callback(feature_packet)
+            except Exception:
+                pass
 
     def _log_recognition_result(self, feature_packet: Dict[str, Any]) -> None:
         faces = feature_packet.get("faces", []) or []
@@ -426,6 +472,8 @@ class PreprocessingService:
             yolo_model = self.pipeline._detector._yolo
             self._registration_detector = FaceDetector(
                 self.pipeline.config.min_face_size,
+                roi_normalizer=self.pipeline._illumination_normalizer,
+                quality_assessor=self.pipeline._quality_assessor,
                 yolo_model=yolo_model,
             )
         return self._registration_detector
@@ -441,6 +489,8 @@ class PreprocessingService:
             detections = self._get_registration_detector().detect(frame, self.pipeline.config.roi_size)
             best = self._pick_best_detection(detections, frame.shape)
             if best is None:
+                continue
+            if best.face_roi is None or best.face_roi.size == 0:
                 continue
             embedding = self._embedding_extractor.extract(best.face_roi)
             if embedding is None:
@@ -506,6 +556,21 @@ class PreprocessingService:
         matched_faces: List[MatchedFace] = []
         for face in tracked_faces:
             if not face.is_live:
+                # 活体不通过：仍发给 UI 显示 SPOOF 标记，但跳过识别
+                matched_faces.append(
+                    MatchedFace(
+                        track_id=face.track_id,
+                        face_id=f"track_{face.track_id}",
+                        student_name="unknown",
+                        bbox=face.bbox,
+                        face_roi=face.face_roi,
+                        confidence=0.0,
+                        face_matched=False,
+                        tracking_score=face.tracking_score,
+                        embedding=None,
+                        is_live=False,
+                    )
+                )
                 continue
             embedding = self._embedding_extractor.extract(face.face_roi)
             best_face_id = None
@@ -537,6 +602,7 @@ class PreprocessingService:
                     face_matched=face_matched,
                     tracking_score=face.tracking_score,
                     embedding=embedding,
+                    is_live=True,
                 )
             )
         return matched_faces
@@ -595,6 +661,7 @@ class PreprocessingService:
                 "bbox": list(face.bbox),
                 "student_name": face.student_name,
                 "face_matched": face.face_matched,
+                "is_live": face.is_live,
             }
             for face in faces
         ]

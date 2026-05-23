@@ -127,7 +127,8 @@ class IOInterface:
             marks = intermediate["marks"]
             head_pose = intermediate["head_pose"]
             face_bbox = intermediate["face_bbox"]
-            num_face_total = intermediate["num_faces"]
+            faces_from_preprocessing = record.get("faces", []) or []
+            num_face_total = len(faces_from_preprocessing) if faces_from_preprocessing else intermediate["num_faces"]
 
             # 估计眼睛状态（自适应 EAR 基线）
             try:
@@ -177,8 +178,9 @@ class IOInterface:
         else:
             output = _build_default_output(owner_face_id, face_matched=face_matched)
             output['timestamp'] = timestamp
+            faces_count = len(record.get("faces", []) or [])
             output['features']['num_face_total'] = {
-                'value': 0,
+                'value': faces_count,
                 'confidence': 0.0,
             }
 
