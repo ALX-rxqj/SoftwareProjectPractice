@@ -75,16 +75,17 @@ class ConnectionManager:
         else:
             try:
                 self._connection.execute("SELECT 1")
-            except (sqlite3.ProgrammingError, sqlite3.DatabaseError) as e:
+            except sqlite3.Error as e:
                 print(f"[ConnectionManager] 连接已失效 ({e})，尝试自动重连...")
                 self.initialize(self._db_path)
         return self._connection
 
     def close(self) -> None:
-        """提交事务并关闭数据库连接"""
+        """提交事务、WAL checkpoint 并关闭数据库连接"""
         if self._connection is not None:
             try:
                 self._connection.commit()
+                self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 self._connection.close()
             except sqlite3.Error:
                 pass

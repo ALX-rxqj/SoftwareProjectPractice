@@ -39,6 +39,12 @@ class MainWindow(QMainWindow):
         self._init_progress_signal.connect(self._on_init_progress_label)
         self._start_async_init()
 
+    def closeEvent(self, event):
+        """窗口关闭时正确关闭数据库连接，确保 WAL checkpoint 执行"""
+        from ..database.database_service import database_service
+        database_service.shutdown()
+        super().closeEvent(event)
+
     def _start_async_init(self):
         """快速显示窗口，后台异步加载预处理模型。"""
 
