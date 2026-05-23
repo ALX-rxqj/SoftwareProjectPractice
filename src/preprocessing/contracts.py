@@ -38,6 +38,7 @@ class MatchedFace:
     face_matched: bool
     tracking_score: float
     embedding: Optional[np.ndarray] = None
+    is_live: bool = True
 
 
 @dataclass(frozen=True)

@@ -21,7 +21,7 @@ except ImportError:  # pragma: no cover
 Logger = Callable[[str], None]
 
 
-@dataclass(frozen=True)
+@dataclass
 class PipelineConfig:
     frame_size: Tuple[int, int] = (1280, 720)
     roi_size: Tuple[int, int] = (224, 224)
