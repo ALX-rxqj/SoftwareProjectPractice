@@ -54,24 +54,22 @@ class FeatureExtractionService:
 
     def __init__(
         self,
-        face_model_path: str = _os.path.join(_ASSETS_DIR, 'face_detector.onnx'),
-        mark_model_path: str = _os.path.join(_ASSETS_DIR, 'face_landmarks.onnx'),
+        mp_model_path: str = _os.path.join(
+            _os.path.dirname(_os.path.abspath(__file__)),
+            '..', '..', 'weights', 'face_landmarker.task'
+        ),
         scoring_callback: Optional[ScoringCallback] = None,
         log_callback: Optional[LogCallback] = None,
         state_callback: Optional[StateCallback] = None,
     ):
         """初始化特征提取service。
-        
+
         Args:
-            face_model_path: 人脸检测模型路径
-            mark_model_path: 人脸关键点模型路径
+            mp_model_path: MediaPipe Face Landmarker 模型路径
             scoring_callback: 评分系统回调函数，接收处理结果
             log_callback: 日志回调函数
         """
-        self.io_interface = IOInterface(
-            face_model_path=face_model_path,
-            mark_model_path=mark_model_path
-        )
+        self.io_interface = IOInterface(mp_model_path=mp_model_path)
         self.scoring_callback = scoring_callback or self._default_scoring_callback
         self.log_callback = log_callback or (lambda msg: None)
         # 可选的状态估计回调（接收 FEI-01 格式的数据）
