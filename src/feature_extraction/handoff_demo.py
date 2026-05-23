@@ -161,8 +161,7 @@ def main() -> int:
     
     # 创建Feature Extraction Service
     feature_service = FeatureExtractionService(
-        face_model_path=str(project_root / "src" / "feature_extraction" / "assets" / "face_detector.onnx"),
-        mark_model_path=str(project_root / "src" / "feature_extraction" / "assets" / "face_landmarks.onnx"),
+        mp_model_path=str(project_root / "weights" / "face_landmarker.task"),
         scoring_callback=on_scoring_result,
         log_callback=on_feature_log,
     )

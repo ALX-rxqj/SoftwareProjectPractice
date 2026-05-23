@@ -7,6 +7,7 @@
 
 """
 import time
+from collections import deque
 import numpy as np
 
 
@@ -63,6 +64,72 @@ def _estimate_eye_state(marks):
     if closed_score >= 0.25:
         return {"value": 1, "confidence": closed_score}
     return {"value": 0, "confidence": _clip01(1.0 - closed_score)}
+
+
+class EyeStateEstimator:
+    """Adaptive eye state estimator using personal EAR baseline.
+
+    Instead of a hardcoded EAR threshold, this class maintains a rolling
+    history of recent EAR values and computes a per-person "normal open-eye"
+    baseline (P85 percentile). Eye state is classified based on the ratio of
+    current EAR to baseline, making it robust across different eye shapes.
+
+    Warmup: first 30 frames use the hardcoded fallback threshold.
+    Guard: only frames with ratio >= 0.60 are added to history to prevent
+           baseline drift during prolonged eye closure.
+    Person switch: changing face_id triggers automatic reset.
+    """
+
+    HISTORY_SIZE = 90
+    BASELINE_PERCENTILE = 85
+    WARMUP_FRAMES = 30
+    CLOSED_RATIO = 0.50
+    UPDATE_GUARD_RATIO = 0.60
+    MIN_BASELINE = 0.10
+
+    def __init__(self):
+        self._history = deque(maxlen=self.HISTORY_SIZE)
+        self._baseline = None
+        self._baseline_frame_count = 0
+        self._current_face_id = None
+
+    def reset(self):
+        self._history.clear()
+        self._baseline = None
+        self._baseline_frame_count = 0
+        self._current_face_id = None
+
+    def estimate(self, marks, face_id=None):
+        ear = _compute_ear(marks)["value"]
+
+        if face_id is not None and face_id != self._current_face_id:
+            self.reset()
+            self._current_face_id = face_id
+
+        if self._baseline_frame_count < self.WARMUP_FRAMES:
+            self._history.append(ear)
+            self._baseline_frame_count += 1
+            return _estimate_eye_state(marks)
+
+        self._baseline = max(
+            float(np.percentile(list(self._history), self.BASELINE_PERCENTILE)),
+            self.MIN_BASELINE,
+        )
+
+        ratio = ear / self._baseline
+
+        if ratio < self.CLOSED_RATIO:
+            closed_score = _clip01((self.CLOSED_RATIO - ratio) / (self.CLOSED_RATIO * 0.6))
+            result = {"value": 1, "confidence": max(0.25, closed_score)}
+        else:
+            open_margin = ratio - self.CLOSED_RATIO
+            confidence = _clip01(0.4 + open_margin / (1.0 - self.CLOSED_RATIO) * 0.6)
+            result = {"value": 0, "confidence": confidence}
+
+        if ratio >= self.UPDATE_GUARD_RATIO:
+            self._history.append(ear)
+
+        return result
 
 
 def _estimate_looking_screen(head_pose, eye_state):
@@ -212,5 +279,6 @@ def _build_prompt_output(timestamp, face_id, head_pose, eye_state, is_looking_sc
 __all__ = [
     '_clip01', '_distance', '_eye_aspect_ratio', '_compute_ear', '_mouth_aspect_ratio',
     '_estimate_eye_state', '_estimate_looking_screen', '_estimate_face_distance_state',
-    '_estimate_attention_state', '_estimate_yawning_state', '_build_default_output', '_build_prompt_output'
+    '_estimate_attention_state', '_estimate_yawning_state', '_build_default_output', '_build_prompt_output',
+    'EyeStateEstimator',
 ]

@@ -1,139 +1,137 @@
 """
-输入/输出接口模块（轻量封装）
+输入/输出接口模块（MediaPipe Face Landmarker 版）
 
-此模块只负责把外部输入转换为内部处理调用，并把处理结果按约定输出。
-内部直接调用项目中已有的 `FaceDetector`, `MarkDetector`, `PoseEstimator` 等实现。
+此模块使用 MediaPipe Face Landmarker 替换原有的 ONNX 68 点模型链。
+通过适配器将 MediaPipe 478 点输出转换为现有管线兼容的格式。
 
-提供的主要函数：
-- `IOInterface` 类：可复用的实例化封装，方法 `process(record, send_to_scoring)` 用于处理单条输入并回调输出。
-- `process_batch(records, send_to_scoring, io)`：批量处理工具函数。
-
+提供的主要类：
+- `IOInterface`：处理单条输入并通过回调输出结果。
+- `process_batch`：批量处理工具函数。
 """
+import os as _os
 from typing import Callable, Dict, List, Any, Optional
+
+import cv2
 import numpy as np
+import mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision
 
-from .face_detection import FaceDetector
-from .mark_detection import MarkDetector
-from .pose_estimation import PoseEstimator
-from .utils import refine
-
+from .mediapipe_adapter import (
+    mp_to_68_marks,
+    mp_extract_head_pose,
+    mp_get_face_bbox,
+)
 from .metrics import (
     _build_default_output,
     _build_prompt_output,
     _estimate_attention_state,
-    _estimate_eye_state,
     _estimate_face_distance_state,
     _estimate_looking_screen,
     _estimate_yawning_state,
+    EyeStateEstimator,
 )
+
+# 模型文件默认路径
+_ASSETS_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', '..', 'weights')
+_DEFAULT_MP_MODEL = _os.path.join(_ASSETS_DIR, 'face_landmarker.task')
 
 
 class IOInterface:
     """封装输入/输出调用的接口类。
 
+    使用 MediaPipe Face Landmarker 进行人脸检测 + 关键点提取 + 头部姿态估计。
+
     使用示例：
         io = IOInterface()
         io.process(record, send_to_scoring)
-"""
+    """
 
     def __init__(self,
-                 face_model_path: str = 'assets/face_detector.onnx',
-                 mark_model_path: str = 'assets/face_landmarks.onnx'):
-        self.face_detector = FaceDetector(face_model_path)
-        self.mark_detector = MarkDetector(mark_model_path)
-        self.pose_estimator: Optional[PoseEstimator] = None
+                 mp_model_path: str = _DEFAULT_MP_MODEL,
+                 num_faces: int = 1,
+                 min_detection_confidence: float = 0.5,
+                 min_tracking_confidence: float = 0.5):
+        mp_options = vision.FaceLandmarkerOptions(
+            base_options=mp_python.BaseOptions(model_asset_path=mp_model_path),
+            running_mode=vision.RunningMode.IMAGE,
+            num_faces=num_faces,
+            min_face_detection_confidence=min_detection_confidence,
+            min_face_presence_confidence=min_detection_confidence,
+            min_tracking_confidence=min_tracking_confidence,
+            output_face_blendshapes=False,
+            output_facial_transformation_matrixes=True,
+        )
+        self.mp_landmarker = vision.FaceLandmarker.create_from_options(mp_options)
+        self.eye_estimator = EyeStateEstimator()
 
-    def _ensure_pose_estimator(self, frame: np.ndarray):
-        h, w = frame.shape[0], frame.shape[1]
-        if self.pose_estimator is None or self.pose_estimator.size != (h, w):
-            # PoseEstimator 构造需要 (width, height) 参数
-            self.pose_estimator = PoseEstimator(w, h)
+    def _process_frame(self, frame: np.ndarray) -> Optional[Dict[str, Any]]:
+        """用 MediaPipe 处理单帧，返回中间结果字典。
 
-    def _parse_marks(self, raw_marks: np.ndarray) -> np.ndarray:
-        """把模型输出的关键点数组转换为 (68,2) 形式。
-
-        这个处理尝试兼容常见的输出形状。
+        Returns:
+            dict with keys: num_faces, marks, head_pose, face_bbox
+            or None if no face detected.
         """
-        marks = np.array(raw_marks)
-        if marks.ndim == 3 and marks.shape[0] == 1:
-            marks = marks[0]
-        if marks.ndim == 1:
-            # 可能是 [136] 的扁平向量
-            if marks.size == 136:
-                marks = marks.reshape((68, 2))
-            else:
-                raise ValueError('无法识别的关键点形状: {}'.format(marks.shape))
-        if marks.ndim == 2 and marks.shape[1] == 136:
-            marks = marks.reshape((-1, 2))
-        if marks.ndim == 2 and marks.shape[1] == 2:
-            return marks.astype(np.float32)
-        raise ValueError('无法识别的关键点形状: {}'.format(marks.shape))
+        h, w = frame.shape[:2]
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        result = self.mp_landmarker.detect(mp_image)
 
-    def process(self, record: Dict[str, Any], send_to_scoring: Callable[[Dict[str, Any]], None],
-                mark_threshold: float = 0.5) -> None:
-        """处理单条输入并通过 `send_to_scoring` 回调结果。
-        
-        完全按照main.py的逻辑处理原始帧：
-        1. 从原始帧中检测人脸
-        2. 提取关键点
-        3. 计算所有特征
+        num_faces = len(result.face_landmarks)
+        if num_faces == 0:
+            return None
 
-        输入 record 示例（注意：faces列表不再被使用）：
-        {
-            "timestamp": 12345.6,
-            "faces": [...],           # 可选，不被使用
-            "owner_face_id": track_id,
-            "original_frame": frame,  # 原始摄像头帧
-            "face_matched": True      # 可选，会被转发到输出
+        landmarks = result.face_landmarks[0]
+        transform = (
+            result.facial_transformation_matrixes[0]
+            if result.facial_transformation_matrixes
+            else None
+        )
+
+        marks = mp_to_68_marks(landmarks, w, h)
+        head_pose = mp_extract_head_pose(transform)
+        face_bbox = mp_get_face_bbox(landmarks, w, h)
+
+        return {
+            "num_faces": num_faces,
+            "marks": marks,
+            "head_pose": head_pose,
+            "face_bbox": face_bbox,
         }
 
+    def process(self, record: Dict[str, Any],
+                send_to_scoring: Callable[[Dict[str, Any]], None],
+                mark_threshold: float = 0.5) -> None:
+        """处理单条输入并通过 `send_to_scoring` 回调结果。
+
+        输入 record：
+        {
+            "timestamp": float,
+            "faces": [...],           # 可选，不再使用
+            "owner_face_id": track_id,
+            "original_frame": frame,  # 原始摄像头帧
+            "face_matched": bool      # 可选，会被转发到输出
+        }
         """
         timestamp = float(record.get('timestamp', 0.0))
         owner_face_id = record.get('owner_face_id')
         original_frame = record.get('original_frame', None)
         face_matched = record.get('face_matched', False)
 
-        # 使用原始帧作为处理帧
         if original_frame is None:
             original_frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
-        # 初始化PoseEstimator
-        self._ensure_pose_estimator(original_frame)
+        intermediate = self._process_frame(original_frame)
 
-        # 第一步：从原始帧中检测人脸
-        faces, _ = self.face_detector.detect(original_frame, 0.7)
-        num_face_total = len(faces)
+        if intermediate is not None:
+            marks = intermediate["marks"]
+            head_pose = intermediate["head_pose"]
+            face_bbox = intermediate["face_bbox"]
+            num_face_total = intermediate["num_faces"]
 
-        # 是否检测到有效人脸
-        if len(faces) > 0:
-            # 第二步：选择主人脸并检测关键点
-            frame_height, frame_width = original_frame.shape[0], original_frame.shape[1]
-            face = refine(faces, frame_width, frame_height, 0.15)[0]
-            x1, y1, x2, y2 = face[:4].astype(int)
-            
+            # 估计眼睛状态（自适应 EAR 基线）
             try:
-                # 从原始帧中裁剪人脸区域
-                patch = original_frame[y1:y2, x1:x2]
-                
-                # 执行关键点检测
-                marks = self.mark_detector.detect([patch])[0].reshape([68, 2])
-                
-                # 将局部人脸区域中的坐标转换回整张图像坐标
-                marks[:, 0] += x1
-                marks[:, 1] += y1
-            except Exception:
-                marks = np.zeros((68, 2), dtype=np.float32)
-
-            # 第三步：利用68个关键点估计头部姿态
-            try:
-                pose = self.pose_estimator.solve(marks)
-                head_pose = self.pose_estimator.get_head_pose_data(marks, pose)["head_pose"]
-            except Exception:
-                head_pose = {'pitch': 0.0, 'yaw': 0.0, 'roll': 0.0, 'confidence': 0.0}
-
-            # 估计眼睛状态
-            try:
-                eye_state = _estimate_eye_state(marks)
+                eye_state = self.eye_estimator.estimate(marks, face_id=owner_face_id)
             except Exception:
                 eye_state = {'value': 0, 'confidence': 0.0}
 
@@ -145,7 +143,7 @@ class IOInterface:
 
             # 估计人脸距离状态
             face_distance_state = _estimate_face_distance_state(
-                face_box=face[:4],
+                face_box=face_bbox,
                 frame_shape=original_frame.shape,
             )
 
@@ -177,18 +175,19 @@ class IOInterface:
                 face_matched=face_matched,
             )
         else:
-            # 没有检测到人脸，返回默认输出
             output = _build_default_output(owner_face_id, face_matched=face_matched)
             output['timestamp'] = timestamp
             output['features']['num_face_total'] = {
-                'value': int(num_face_total),
-                'confidence': float(np.clip(1.0 if num_face_total > 0 else 0.0, 0.0, 1.0)),
+                'value': 0,
+                'confidence': 0.0,
             }
 
         send_to_scoring(output)
 
 
-def process_batch(records: List[Dict[str, Any]], send_to_scoring: Callable[[Dict[str, Any]], None], io: Optional[IOInterface] = None):
+def process_batch(records: List[Dict[str, Any]],
+                  send_to_scoring: Callable[[Dict[str, Any]], None],
+                  io: Optional[IOInterface] = None):
     """批量处理接口列表。"""
     if io is None:
         io = IOInterface()
@@ -196,7 +195,6 @@ def process_batch(records: List[Dict[str, Any]], send_to_scoring: Callable[[Dict
         try:
             io.process(r, send_to_scoring)
         except Exception:
-            # 单条出错时继续处理其余条目
             continue
 
 
