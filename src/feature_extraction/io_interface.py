@@ -33,7 +33,7 @@ from .metrics import (
 )
 
 # 模型文件默认路径
-_ASSETS_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', '..', 'weights')
+_ASSETS_DIR = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), '..', '..', 'weights'))
 _DEFAULT_MP_MODEL = _os.path.join(_ASSETS_DIR, 'face_landmarker.task')
 
 
@@ -150,7 +150,7 @@ class IOInterface:
 
             # 估计打哈欠状态
             try:
-                is_yawning = _estimate_yawning_state(marks, head_pose=head_pose)
+                is_yawning = _estimate_yawning_state(marks, head_pose=head_pose, eye_state=eye_state)
             except Exception:
                 is_yawning = {'value': False, 'confidence': 0.0}
 

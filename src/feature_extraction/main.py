@@ -23,11 +23,11 @@ from .metrics import (
     _build_default_output,
     _build_prompt_output,
     _estimate_attention_state,
-    _estimate_eye_state,
     _estimate_face_distance_state,
     _estimate_looking_screen,
     _estimate_yawning_state,
     _mouth_aspect_ratio,
+    EyeStateEstimator,
 )
 
 # 当作为模块被导入时，提供一个默认的 args，避免在导入时解析命令行参数
@@ -72,6 +72,9 @@ def run():
     # 初始化姿态估计器。
     pose_estimator = PoseEstimator(frame_width, frame_height)
 
+    # 初始化眼睛状态估计器（自适应 EAR 基线）。
+    eye_estimator = EyeStateEstimator()
+
     # 使用计时器统计性能。
     tm = cv2.TickMeter()
     output = _build_default_output(args.face_id)
@@ -115,13 +118,13 @@ def run():
             # 第三步：利用 68 个关键点估计头部姿态
             pose = pose_estimator.solve(marks)
             head_pose = pose_estimator.get_head_pose_data(marks, pose)["head_pose"]
-            eye_state = _estimate_eye_state(marks)
+            eye_state = eye_estimator.estimate(marks, face_id=args.face_id)
             is_looking_screen = _estimate_looking_screen(head_pose, eye_state)
             face_distance_state = _estimate_face_distance_state(
                 face_box=face[:4],
                 frame_shape=frame.shape,
             )
-            is_yawning = _estimate_yawning_state(marks, head_pose=head_pose)
+            is_yawning = _estimate_yawning_state(marks, head_pose=head_pose, eye_state=eye_state)
             attention_state = _estimate_attention_state(
                 eye_state,
                 is_looking_screen,
