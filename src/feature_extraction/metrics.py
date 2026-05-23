@@ -169,8 +169,8 @@ def _estimate_face_distance_state(face_box=None, frame_shape=None, face_roi_shap
         frame_area = max(area * 8.0, 1.0)
 
     ratio = area / frame_area
-    if ratio < 0.05:
-        confidence = _clip01((0.05 - ratio) / 0.05)
+    if ratio < 0.10:
+        confidence = _clip01((0.10 - ratio) / 0.10)
         return {"value": 1, "confidence": confidence}
     if ratio > 0.22:
         confidence = _clip01((ratio - 0.22) / 0.18)
@@ -203,15 +203,17 @@ def _estimate_attention_state(eye_state, is_looking_screen, face_distance_state,
     return {"value": 0, "confidence": confidence}
 
 
-def _estimate_yawning_state(marks, head_pose=None, threshold=0.25, margin=0.10):
+def _estimate_yawning_state(marks, head_pose=None, eye_state=None, threshold=0.30, margin=0.10):
     """估计是否打哈欠，以及该判断的可信度。
 
     value: bool，是否打哈欠
-    confidence: float，对当前判定结果的把握度，越远离阈值越高。
+    confidence: float，对当前判定结果的把握度。
     
-    侧脸时自动禁用判别，避免误判。
+    - 张嘴且眼睛闭合时置信度最高（0.80-0.95）
+    - 单纯张嘴时置信度较低（0.70-0.75）
+    - 侧脸时自动禁用判别，避免误判。
     """
-    # 侧脸检测：如果yaw角度 > 20度，说明是侧脸，禁用打哈欠检测
+    # 侧脸检测：如果yaw角度 > 30度，说明是侧脸，禁用打哈欠检测
     if head_pose is not None and "yaw" in head_pose:
         yaw = abs(head_pose.get("yaw", 0))
         if yaw > 30:  # 侧脸角度过大，不判别
@@ -220,15 +222,23 @@ def _estimate_yawning_state(marks, head_pose=None, threshold=0.25, margin=0.10):
     mar = _mouth_aspect_ratio(marks)
     value = bool(mar >= threshold)
     
-    # 改进置信度计算：添加基础置信度，提高整体置信度水平
     if value:
-        # 张嘴时：基础置信度 0.4 + 增益 [0, 0.6]
+        # 张嘴时的置信度计算
         relative_conf = _clip01((mar - threshold) / max(margin, 1e-6))
-        confidence = _clip01(0.4 + 0.6 * relative_conf)
+        
+        # 检查眼睛是否闭合
+        eyes_closed = eye_state is not None and eye_state.get("value") == 1
+        
+        if eyes_closed:
+            # 张嘴且眼睛闭合：置信度范围 0.80-0.95（真正的打哈欠）
+            confidence = _clip01(0.80 + 0.15 * relative_conf)
+        else:
+            # 只张嘴（眼睛睁着）：置信度范围 0.70-0.75（可能是说话）
+            confidence = _clip01(0.70 + 0.05 * relative_conf)
     else:
-        # 没张嘴时：基础置信度 0.3 + 增益 [0, 0.7]
+        # 没张嘴时：置信度范围 0.3-0.7
         relative_conf = _clip01((threshold - mar) / max(margin * 2, 1e-6))
-        confidence = _clip01(0.6 + 0.4 * relative_conf)
+        confidence = _clip01(0.3 + 0.4 * relative_conf)
     
     return {"value": value, "confidence": confidence}
 

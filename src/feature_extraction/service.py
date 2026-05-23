@@ -54,10 +54,10 @@ class FeatureExtractionService:
 
     def __init__(
         self,
-        mp_model_path: str = _os.path.join(
+        mp_model_path: str = _os.path.abspath(_os.path.join(
             _os.path.dirname(_os.path.abspath(__file__)),
             '..', '..', 'weights', 'face_landmarker.task'
-        ),
+        )),
         scoring_callback: Optional[ScoringCallback] = None,
         log_callback: Optional[LogCallback] = None,
         state_callback: Optional[StateCallback] = None,
