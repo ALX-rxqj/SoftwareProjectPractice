@@ -325,6 +325,9 @@ class DatabaseService:
                 if alert_rows:
                     conn.executemany(alert_sql, alert_rows)
                 conn.commit()
+                # 大批量写入后执行 WAL checkpoint，确保数据持久化到主数据库
+                if len(focus_rows) >= 100 or len(alert_rows) >= 50:
+                    conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
                 print(f"[DatabaseService] 批量写入: {len(focus_rows)} 条评分, {len(alert_rows)} 条告警")
                 return True
             except sqlite3.Error as e:
@@ -337,8 +340,9 @@ class DatabaseService:
                 if attempt < 2:
                     time.sleep(0.1)
 
-        print(f"[DatabaseService] 批量写入最终失败，数据已丢弃（应有快照兜底）")
-        return False
+        raise RuntimeError(
+            f"[DatabaseService] 批量写入最终失败（3次重试均失败）: {last_error}"
+        )
 
     # ────────────────── 查询 ──────────────────
 
