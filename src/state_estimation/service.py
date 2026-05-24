@@ -221,6 +221,7 @@ class StateEstimationService:
 
         if start:
             # 启动分析：使用传入的 session_id 或自动创建
+            self._estimator.reset()
             if session_id:
                 monitor_mode = MonitorMode.EXAM if mode.lower() == "exam" else MonitorMode.CLASS
                 self._session_manager.adopt_session(session_id, monitor_mode)
@@ -236,6 +237,7 @@ class StateEstimationService:
                 self._session_manager.end_session(session_id)
             elif self._session_manager.current_session_id:
                 self._session_manager.end_session(self._session_manager.current_session_id)
+            self._estimator.reset()
             return {"success": True}
 
     def on_session_init(self) -> Dict[str, Any]:
@@ -469,8 +471,9 @@ class StateEstimationService:
                 "timestamp": t,
                 "session_id": session_id,
                 "head_pose_score": round(max(0.0, min(100.0, final_score + random.uniform(-8, 8))), 1),
-                "behavior_score": round(max(0.0, min(100.0, final_score + random.uniform(-5, 5))), 1),
-                "expression_score": round(max(0.0, min(100.0, final_score + random.uniform(-10, 10))), 1),
+                "eye_score": round(max(0.0, min(100.0, final_score + random.uniform(-5, 5))), 1),
+                "yawn_score": round(max(0.0, min(100.0, final_score + random.uniform(-10, 10))), 1),
+                "distance_score": round(max(0.0, min(100.0, final_score + random.uniform(-6, 6))), 1),
                 "evidence_score": round(max(0.0, min(100.0, final_score + random.uniform(-3, 3))), 1),
                 "people_score": round(random.uniform(85, 100), 1),
                 "final_focus_score": round(final_score, 1),
@@ -665,8 +668,9 @@ class StateEstimationService:
             timestamp=feature_data.timestamp,
             session_id=session_id,
             head_pose_score=scores.get("head_pose", 0.0),
-            behavior_score=scores.get("behavior", 0.0),
-            expression_score=scores.get("expression", 0.0),
+            eye_score=scores.get("eye", 0.0),
+            yawn_score=scores.get("yawn", 0.0),
+            distance_score=scores.get("distance", 0.0),
             evidence_score=scores.get("evidence", 0.0),
             people_score=scores.get("people", 0.0),
             final_focus_score=scores.get("final_focus", 0.0),
@@ -937,19 +941,34 @@ class StateEstimationService:
 
     @staticmethod
     def _debug_scores(scores: dict, is_force_zero: bool, is_over_threshold: bool, warn_candidates: tuple):
-        """打印评分结果"""
+        """打印评分结果（四源 DS 证据融合）"""
+        m_nf = scores.get("mass_not_focused", 0.0)
+        active_sources = [
+            name for name in ("head_pose", "eye", "yawn", "distance")
+            if scores.get(name, 0.0) > 0.1
+        ]
+
         lines = [
-            "[DEBUG] 评分结果",
-            f"  head_pose   : {scores.get('head_pose', 0):.1f}",
-            f"  behavior    : {scores.get('behavior', 0):.1f}",
-            f"  expression  : {scores.get('expression', 0):.1f}",
-            f"  evidence    : {scores.get('evidence', 0):.1f}",
-            f"  people      : {scores.get('people', 0):.1f}",
-            f"  final_focus : {scores.get('final_focus', 0):.1f}",
-            f"  is_force_zero      : {is_force_zero}",
-            f"  is_over_threshold   : {is_over_threshold}",
-            f"  warn_candidates     : {[w.warn_type for w in warn_candidates] if warn_candidates else '无'}",
-            "-" * 40,
+            "-" * 56,
+            "[DEBUG] DS 证据融合评分结果",
+            "  --- 四源风险分 (m({NF}) x 100, smoothed) ---",
+            f"  head_pose : {scores.get('head_pose', 0):5.1f}  (raw: {scores.get('head_pose_raw', 0):5.1f})  spatial: {scores.get('head_pose_spatial', 0):5.1f}  temporal: {scores.get('head_pose_temporal', 0):5.1f}",
+            f"  eye       : {scores.get('eye', 0):5.1f}  (raw: {scores.get('eye_raw', 0):5.1f})",
+            f"  yawn      : {scores.get('yawn', 0):5.1f}  (raw: {scores.get('yawn_raw', 0):5.1f})",
+            f"  distance  : {scores.get('distance', 0):5.1f}  (raw: {scores.get('distance_raw', 0):5.1f})",
+            f"  --- 低头计时器 (class only) ---",
+            f"  down_frames : {scores.get('temporal_down_frames', 0):.0f} / 900  (≈{scores.get('temporal_down_frames', 0) / 30:.0f}s / 30s)",
+            f"  gap_frames  : {scores.get('temporal_gap_frames', 0):.0f} / 90   (≈{scores.get('temporal_gap_frames', 0) / 30:.1f}s / 3s)",
+            "  --- 融合结果 ---",
+            f"  m({{NF}}) combined : {m_nf:.4f}",
+            f"  evidence   : {scores.get('evidence', 0):.1f}  (= (1 - m(NF)) x 100)",
+            f"  people     : {scores.get('people', 0):.0f}",
+            f"  final_focus: {scores.get('final_focus', 0):.1f}",
+            f"  active sources    : {active_sources if active_sources else 'none'}",
+            f"  is_force_zero     : {is_force_zero}",
+            f"  is_over_threshold : {is_over_threshold}",
+            f"  warn_candidates   : {[w.warn_type for w in warn_candidates] if warn_candidates else 'none'}",
+            "-" * 56,
         ]
         for line in lines:
             print(line)

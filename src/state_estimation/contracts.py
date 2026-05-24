@@ -28,13 +28,17 @@ class MonitorMode(Enum):
 
 
 # --- 告警类型常量 ---
+# 画面/人数类（优先级最高）
 WARN_NO_FACE = "no_face"
 WARN_MULTI_FACE = "multi_face"
 WARN_FACE_MISMATCH = "face_mismatch"
+# 证据融合类
 WARN_LOW_EVIDENCE = "low_evidence"
-WARN_LOW_HEAD_POSE = "low_head_pose"
-WARN_LOW_BEHAVIOR = "low_behavior"
-WARN_LOW_EXPRESSION = "low_expression"
+# 单证据源异常（按传感器独立告警）
+WARN_HEAD_POSE = "head_pose"
+WARN_EYE_STATE = "eye_state"
+WARN_YAWNING = "yawning"
+WARN_DISTANCE = "distance"
 
 # 告警优先级映射 — 数值越小优先级越高
 _ALERT_PRIORITY = {
@@ -42,9 +46,10 @@ _ALERT_PRIORITY = {
     WARN_MULTI_FACE: 1,
     WARN_FACE_MISMATCH: 2,
     WARN_LOW_EVIDENCE: 3,
-    WARN_LOW_HEAD_POSE: 4,
-    WARN_LOW_BEHAVIOR: 5,
-    WARN_LOW_EXPRESSION: 6,
+    WARN_HEAD_POSE: 4,
+    WARN_EYE_STATE: 4,
+    WARN_YAWNING: 4,
+    WARN_DISTANCE: 4,
 }
 
 # 降采样窗口占比阈值
@@ -79,7 +84,8 @@ class WarnInfo:
     告警信息数据结构
 
     Attributes:
-        warn_type: 告警类型（no_face, multi_face, face_mismatch, low_evidence, low_head_pose, low_behavior, low_expression）
+        warn_type: 告警类型（no_face, multi_face, face_mismatch,
+                   low_evidence, head_pose, eye_state, yawning, distance）
         detail: 告警详情描述
     """
     warn_type: str
@@ -93,13 +99,20 @@ class FocusResultData:
 
     调用时机：每完成一次帧级评分计算后输出
 
+    四个独立证据源各自的质量值（m({不专注}) × 100，即风险分 [0, 100]）：
+    - head_pose_score: 头部姿态风险分
+    - eye_score: 眼部状态风险分
+    - yawn_score: 哈欠检测风险分
+    - distance_score: 人脸距离风险分
+
     Attributes:
         timestamp: 当前帧时间戳
         session_id: 当前会话ID
-        head_pose_score: 头部姿态综合分 [0, 100]
-        behavior_score: 行为动作综合分 [0, 100]
-        expression_score: 表情综合分 [0, 100]
-        evidence_score: 证据理论融合评分 [0, 100]
+        head_pose_score: 头部姿态风险分 [0, 100]
+        eye_score: 眼部状态风险分 [0, 100]
+        yawn_score: 哈欠检测风险分 [0, 100]
+        distance_score: 人脸距离风险分 [0, 100]
+        evidence_score: DS证据融合评分 [0, 100]（= 100 - 组合后m({不专注})×100）
         people_score: 人数项评分 [0, 100]
         final_focus_score: 最终专注度评分 [0, 100]
         is_force_zero: 是否因累计异常强制置0
@@ -109,8 +122,9 @@ class FocusResultData:
     timestamp: float
     session_id: str
     head_pose_score: float
-    behavior_score: float
-    expression_score: float
+    eye_score: float
+    yawn_score: float
+    distance_score: float
     evidence_score: float
     people_score: float
     final_focus_score: float
@@ -125,8 +139,9 @@ class FocusResultData:
             "timestamp": self.timestamp,
             "session_id": self.session_id,
             "head_pose_score": self.head_pose_score,
-            "behavior_score": self.behavior_score,
-            "expression_score": self.expression_score,
+            "eye_score": self.eye_score,
+            "yawn_score": self.yawn_score,
+            "distance_score": self.distance_score,
             "evidence_score": self.evidence_score,
             "people_score": self.people_score,
             "final_focus_score": self.final_focus_score,
