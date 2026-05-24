@@ -17,9 +17,9 @@ from src.state_estimation.contracts import (
     WARN_MULTI_FACE,
     WARN_FACE_MISMATCH,
     WARN_LOW_EVIDENCE,
-    WARN_LOW_HEAD_POSE,
-    WARN_LOW_BEHAVIOR,
-    WARN_LOW_EXPRESSION,
+    WARN_HEAD_POSE,
+    WARN_EYE_STATE,
+    WARN_YAWNING,
     alert_priority,
     pick_highest_alert,
     WarnInfo,
@@ -63,9 +63,9 @@ class TestAlertPriority:
             WARN_MULTI_FACE,
             WARN_FACE_MISMATCH,
             WARN_LOW_EVIDENCE,
-            WARN_LOW_HEAD_POSE,
-            WARN_LOW_BEHAVIOR,
-            WARN_LOW_EXPRESSION,
+            WARN_HEAD_POSE,
+            WARN_EYE_STATE,
+            WARN_YAWNING,
         ]
         priorities = [alert_priority(t) for t in types]
         assert priorities == sorted(priorities), "优先级应保持定义的数值顺序"
@@ -82,12 +82,12 @@ class TestPickHighestAlert:
 
     def test_single_returns_that(self):
         """单个候选直接返回"""
-        warn = WarnInfo(warn_type=WARN_LOW_HEAD_POSE, detail="头部姿态评分过低")
+        warn = WarnInfo(warn_type=WARN_HEAD_POSE, detail="头部姿态评分过低")
         assert pick_highest_alert((warn,)) is warn
 
     def test_picks_highest_priority(self):
         """多个候选时返回优先级最高的"""
-        low_pri = WarnInfo(warn_type=WARN_LOW_EXPRESSION, detail="表情评分过低")
+        low_pri = WarnInfo(warn_type=WARN_YAWNING, detail="表情评分过低")
         high_pri = WarnInfo(warn_type=WARN_NO_FACE, detail="画面中无人脸")
         result = pick_highest_alert((low_pri, high_pri))
         assert result.warn_type == WARN_NO_FACE
@@ -108,13 +108,14 @@ class TestFocusResultDataToDict:
     def test_to_dict_with_warn(self):
         """有告警时 warn_info 包含最高优先级告警"""
         warn_low = WarnInfo(warn_type=WARN_NO_FACE, detail="无人脸")
-        warn_high = WarnInfo(warn_type=WARN_LOW_BEHAVIOR, detail="行为低分")
+        warn_high = WarnInfo(warn_type=WARN_EYE_STATE, detail="眼部异常")
         result = FocusResultData(
             timestamp=100.0,
             session_id="s1",
             head_pose_score=80.0,
-            behavior_score=30.0,
-            expression_score=70.0,
+            eye_score=30.0,
+            yawn_score=70.0,
+            distance_score=50.0,
             evidence_score=60.0,
             people_score=0.0,
             final_focus_score=0.0,
@@ -133,8 +134,9 @@ class TestFocusResultDataToDict:
             timestamp=100.0,
             session_id="s1",
             head_pose_score=80.0,
-            behavior_score=85.0,
-            expression_score=70.0,
+            eye_score=85.0,
+            yawn_score=70.0,
+            distance_score=50.0,
             evidence_score=78.0,
             people_score=100.0,
             final_focus_score=78.0,
@@ -151,8 +153,9 @@ class TestFocusResultDataToDict:
             timestamp=100.0,
             session_id="s1",
             head_pose_score=1.0,
-            behavior_score=2.0,
-            expression_score=3.0,
+            eye_score=2.0,
+            yawn_score=3.0,
+            distance_score=2.5,
             evidence_score=4.0,
             people_score=5.0,
             final_focus_score=6.0,
@@ -163,7 +166,7 @@ class TestFocusResultDataToDict:
         d = result.to_dict()
         expected_keys = {
             "timestamp", "session_id",
-            "head_pose_score", "behavior_score", "expression_score",
+            "head_pose_score", "eye_score", "yawn_score", "distance_score",
             "evidence_score", "people_score", "final_focus_score",
             "is_force_zero", "is_over_threshold", "warn_info",
         }

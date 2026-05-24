@@ -32,6 +32,9 @@ class FocusRecord:
     session_id: str
     timestamp: float
     head_pose_score: float = 0.0
+    eye_score: float = 0.0
+    yawn_score: float = 0.0
+    distance_score: float = 0.0
     behavior_score: float = 0.0
     expression_score: float = 0.0
     evidence_score: float = 0.0
@@ -82,7 +85,7 @@ class SchemaManager:
     """数据库 Schema 版本管理器（单例）"""
 
     _instance: Optional["SchemaManager"] = None
-    CURRENT_VERSION: int = 5
+    CURRENT_VERSION: int = 6
 
     _DDL = {
         1: [
@@ -203,6 +206,11 @@ class SchemaManager:
         5: [
             "ALTER TABLE sessions ADD COLUMN video_source_type TEXT NOT NULL DEFAULT 'camera'",
             "ALTER TABLE sessions ADD COLUMN file_name TEXT DEFAULT NULL",
+        ],
+        6: [
+            "ALTER TABLE focus_records ADD COLUMN eye_score REAL DEFAULT 0.0",
+            "ALTER TABLE focus_records ADD COLUMN yawn_score REAL DEFAULT 0.0",
+            "ALTER TABLE focus_records ADD COLUMN distance_score REAL DEFAULT 0.0",
         ],
     }
 

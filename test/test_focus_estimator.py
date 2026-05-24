@@ -20,8 +20,8 @@ import pytest
 from src.state_estimation.contracts import (
     FeatureData, MonitorMode, WarnInfo,
     WARN_NO_FACE, WARN_MULTI_FACE, WARN_FACE_MISMATCH,
-    WARN_LOW_EVIDENCE, WARN_LOW_HEAD_POSE,
-    WARN_LOW_BEHAVIOR, WARN_LOW_EXPRESSION,
+    WARN_LOW_EVIDENCE, WARN_HEAD_POSE,
+    WARN_EYE_STATE, WARN_YAWNING,
 )
 from src.state_estimation.estimator import FocusEstimator
 
@@ -120,7 +120,7 @@ class TestHeadPoseScoring:
         score, warn = estimator_class._score_head_pose(fd.head_pose)
         assert score < 50
         assert warn is not None
-        assert warn.warn_type == WARN_LOW_HEAD_POSE
+        assert warn.warn_type == WARN_HEAD_POSE
 
 
 # ============================================================
@@ -206,7 +206,7 @@ class TestBehaviorScoring:
         score, warn = estimator_class._score_behavior(fd)
         assert score < 50
         assert warn is not None
-        assert warn.warn_type == WARN_LOW_BEHAVIOR
+        assert warn.warn_type == WARN_EYE_STATE
 
 
 # ============================================================
@@ -257,7 +257,7 @@ class TestExpressionScoring:
         score, warn = estimator_class._score_expression({"value": 2, "confidence": 1.0})
         assert score < 50
         assert warn is not None
-        assert warn.warn_type == WARN_LOW_EXPRESSION
+        assert warn.warn_type == WARN_YAWNING
 
 
 # ============================================================
@@ -374,7 +374,7 @@ class TestFullEstimate:
         """低分场景收集对应告警"""
         _, _, _, warns = estimator_class.estimate(sample_feature_data_bad_pose)
         warn_types = {w.warn_type for w in warns}
-        assert WARN_LOW_HEAD_POSE in warn_types
+        assert WARN_HEAD_POSE in warn_types
 
 
 # ============================================================

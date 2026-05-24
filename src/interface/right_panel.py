@@ -42,8 +42,9 @@ class RightPanel(QFrame):
         """由 MainWindow 调用，统一处理 MOCK/REAL 专注度结果"""
         score_dict = {
             "head_pose": data.head_pose_score,
-            "behavior": data.behavior_score,
-            "expression": data.expression_score,
+            "eye": data.eye_score,
+            "yawn": data.yawn_score,
+            "distance": data.distance_score,
             "evidence": data.evidence_score,
             "people": data.people_score,
             "final_focus": data.final_focus_score,
@@ -74,9 +75,10 @@ class RightPanel(QFrame):
         self.score_items = {}
         score_config = [
             {"key": "head_pose", "name": "头部姿态", "max": 100, "default": 0},
-            {"key": "behavior", "name": "行为", "max": 100, "default": 0},
-            {"key": "expression", "name": "表情", "max": 100, "default": 0},
-            {"key": "evidence", "name": "证据", "max": 100, "default": 0},
+            {"key": "eye", "name": "眼部状态", "max": 100, "default": 0},
+            {"key": "yawn", "name": "哈欠检测", "max": 100, "default": 0},
+            {"key": "distance", "name": "人脸距离", "max": 100, "default": 0},
+            {"key": "evidence", "name": "证据融合", "max": 100, "default": 0},
             {"key": "people", "name": "人数", "max": 100, "default": 0},
         ]
         for config in score_config:
@@ -198,7 +200,7 @@ class RightPanel(QFrame):
     def update_scores(self, score_dict):
         if not self.is_running:
             return
-        for key in ["head_pose", "behavior", "expression", "evidence", "people"]:
+        for key in ["head_pose", "eye", "yawn", "distance", "evidence", "people"]:
             if key in score_dict:
                 val = score_dict[key]
                 self.score_items[key]["label"].setText(f"{val:.1f}")
@@ -233,7 +235,7 @@ class RightPanel(QFrame):
 
     def reset_scores(self):
         """停止分析时重置所有评分为 0"""
-        for key in ["head_pose", "behavior", "expression", "evidence", "people"]:
+        for key in ["head_pose", "eye", "yawn", "distance", "evidence", "people"]:
             self.score_items[key]["label"].setText("0.0")
             self.score_items[key]["progress"].setValue(0)
             self.score_items[key]["progress"].setStyleSheet(

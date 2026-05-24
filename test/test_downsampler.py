@@ -18,7 +18,7 @@ import pytest
 
 from src.state_estimation.contracts import (
     FocusResultData, WarnInfo,
-    WARN_NO_FACE, WARN_MULTI_FACE, WARN_LOW_BEHAVIOR,
+    WARN_NO_FACE, WARN_MULTI_FACE, WARN_EYE_STATE,
 )
 from src.state_estimation.downsampler import Downsampler, DOWNSAMPLE_WINDOW_SECONDS
 
@@ -28,7 +28,8 @@ def _make_result(timestamp, final_focus=85.0, is_force_zero=False,
     """快捷构造 FocusResultData"""
     return FocusResultData(
         timestamp=timestamp, session_id=session_id,
-        head_pose_score=80.0, behavior_score=85.0, expression_score=75.0,
+        head_pose_score=80.0, eye_score=85.0, yawn_score=75.0,
+        distance_score=80.0,
         evidence_score=80.0, people_score=100.0,
         final_focus_score=final_focus,
         is_force_zero=is_force_zero,
@@ -169,7 +170,7 @@ class TestAlertPriorityInWindow:
         f1 = _make_result(0.0, final_focus=0.0, is_force_zero=True,
                           warn_candidates=(WarnInfo(WARN_NO_FACE, "无人脸"),))
         f2 = _make_result(1.5, final_focus=30.0,
-                          warn_candidates=(WarnInfo(WARN_LOW_BEHAVIOR, "行为低分"),))
+                          warn_candidates=(WarnInfo(WARN_EYE_STATE, "眼部状态低分"),))
         downsampler.add_frame(f1)
         result = downsampler.add_frame(f2)
         assert result is not None

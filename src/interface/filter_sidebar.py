@@ -267,14 +267,15 @@ class FilterSidebar(QFrame):
         cc = COLORS["chart_colors"]
         self.show_final_focus = self._make_checkbox("最终专注度", True, cc[0])
         self.show_head_pose = self._make_checkbox("头部姿态", True, cc[1])
-        self.show_behavior = self._make_checkbox("行为动作", True, cc[2])
-        self.show_expression = self._make_checkbox("表情评分", False, cc[3])
-        self.show_evidence = self._make_checkbox("证据理论", False, cc[4])
-        self.show_people = self._make_checkbox("人数项", False, cc[5])
+        self.show_eye = self._make_checkbox("眼部状态", True, cc[2])
+        self.show_yawn = self._make_checkbox("哈欠检测", False, cc[3])
+        self.show_distance = self._make_checkbox("人脸距离", False, cc[4])
+        self.show_evidence = self._make_checkbox("证据理论", False, cc[5])
+        self.show_people = self._make_checkbox("人数项", False, cc[6])
 
         for cb in [
-            self.show_final_focus, self.show_head_pose, self.show_behavior,
-            self.show_expression, self.show_evidence, self.show_people,
+            self.show_final_focus, self.show_head_pose, self.show_eye,
+            self.show_yawn, self.show_distance, self.show_evidence, self.show_people,
         ]:
             chart_options_layout.addWidget(cb)
 
@@ -327,8 +328,9 @@ class FilterSidebar(QFrame):
         return {
             "final_focus": self.show_final_focus.isChecked(),
             "head_pose": self.show_head_pose.isChecked(),
-            "behavior": self.show_behavior.isChecked(),
-            "expression": self.show_expression.isChecked(),
+            "eye": self.show_eye.isChecked(),
+            "yawn": self.show_yawn.isChecked(),
+            "distance": self.show_distance.isChecked(),
             "evidence": self.show_evidence.isChecked(),
             "people": self.show_people.isChecked(),
         }
