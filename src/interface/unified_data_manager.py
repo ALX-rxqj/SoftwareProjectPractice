@@ -252,6 +252,10 @@ class UnifiedDataManager:
         """清除人脸注册结果回调"""
         interface_manager.clear_face_registration_result_callback()
 
+    def register_file_playback_ended_callback(self, callback):
+        """注册文件播放完成回调（转发到 interface_manager）"""
+        interface_manager.register_file_playback_ended_callback(callback)
+
     def register_face(self, name: str, frames: list, storage_type: str) -> Dict[str, Any]:
         """注册人脸。MOCK 模式下不支持。"""
         if self._preprocessing_source == DataSource.MOCK:
@@ -287,8 +291,7 @@ class UnifiedDataManager:
 
                 # Mock 文件模式：检测播放结束
                 if mock.get("file_ended"):
-                    import os
-                    file_name = os.path.basename(mock_data_manager._file_mode_path) if mock_data_manager._file_mode_path else ""
+                    file_name = mock_data_manager.current_file_name or ""
                     interface_manager.on_file_playback_ended(file_name)
 
     def push_focus_result(self, data: Optional[Dict] = None):
@@ -351,16 +354,28 @@ class UnifiedDataManager:
 
     def generate_face_ids_with_details(self) -> List[Dict[str, Any]]:
         """获取已注册人脸列表（含详细信息），用于 UI 展示"""
-        result = interface_manager.query_face_registry()
-        if result and result.get("success"):
-            return result.get("faces", [])
-        # 降级：直接查数据库
-        faces = database_service.query_registered_faces()
-        return [{"face_id": f.get("face_id", ""),
-                 "student_name": f.get("student_name", ""),
-                 "storage_type": "local",
-                 "registered_at": f.get("registered_at", 0)}
-                for f in faces]
+        if self._database_source == DataSource.REAL:
+            result = interface_manager.query_face_registry()
+            if result and result.get("success"):
+                return result.get("faces", [])
+            # 降级：直接查数据库
+            faces = database_service.query_registered_faces()
+            return [{"face_id": f.get("face_id", ""),
+                     "student_name": f.get("student_name", ""),
+                     "storage_type": "local",
+                     "registered_at": f.get("registered_at", 0)}
+                    for f in faces]
+        # MOCK 模式：从 mock_data_manager 构造详细人脸数据
+        face_ids = mock_data_manager.generate_face_ids()
+        return [
+            {
+                "face_id": fid,
+                "student_name": f"学生 {fid}",
+                "storage_type": "local",
+                "registered_at": 0,
+            }
+            for fid in face_ids
+        ]
 
     def delete_face(self, face_id: str) -> Dict[str, Any]:
         """删除已注册人脸：通知预处理 + 删数据库"""

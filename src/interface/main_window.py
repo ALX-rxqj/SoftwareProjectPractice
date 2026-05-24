@@ -73,8 +73,7 @@ class MainWindow(QMainWindow):
         unified_data_manager.register_focus_result_callback(self._on_focus_result_for_display)
 
         # 注册文件播放完成回调
-        from .interface_manager import interface_manager
-        interface_manager.register_file_playback_ended_callback(self._on_file_playback_ended)
+        unified_data_manager.register_file_playback_ended_callback(self._on_file_playback_ended)
 
         if need_loading_label:
             self._init_poll_timer = QTimer()
