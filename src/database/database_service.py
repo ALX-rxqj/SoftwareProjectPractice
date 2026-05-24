@@ -41,6 +41,32 @@ class DatabaseService:
         self._schema_mgr.ensure_schema(self._conn_mgr.get_connection())
         print(f"[DatabaseService] 数据库初始化完成: {db_path}")
 
+    def _retry_write(self, operation, op_name: str) -> bool:
+        """执行写操作的事务重试（3 次，100ms 退避）
+
+        operation: callable(conn) -> None（在 BEGIN..COMMIT 事务中执行）
+        返回 True 表示成功，False 表示 3 次重试均失败。
+        """
+        last_error = None
+        for attempt in range(3):
+            try:
+                conn = self._conn_mgr.get_connection()
+                conn.execute("BEGIN")
+                operation(conn)
+                conn.commit()
+                return True
+            except sqlite3.Error as e:
+                last_error = e
+                print(f"[DatabaseService] {op_name} 失败 (第{attempt+1}次): {e}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                if attempt < 2:
+                    time.sleep(0.1)
+        print(f"[DatabaseService] {op_name} 最终失败: {last_error}")
+        return False
+
     def handle_command(self, command: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
         """命令路由：兼容 DatabaseCommandAdapter 的回调接口"""
         handler = self._command_handlers.get(command)
@@ -75,31 +101,18 @@ class DatabaseService:
         embedding_sql = ("INSERT INTO face_embeddings "
                          "(face_id, embedding, pose_type) VALUES (?, ?, ?)")
 
-        last_error = None
-        for attempt in range(3):
-            try:
-                conn = self._conn_mgr.get_connection()
-                conn.execute("BEGIN")
-                conn.execute(student_sql, (face_id, student_name, registered_at))
-                if embeddings:
-                    conn.executemany(embedding_sql, [
-                        (face_id, emb, pose) for emb, pose in embeddings
-                    ])
-                conn.commit()
-                print(f"[DatabaseService] 已注册人脸: {face_id} ({student_name}), "
-                      f"{len(embeddings)} 个特征向量")
-                return True
-            except sqlite3.Error as e:
-                last_error = e
-                print(f"[DatabaseService] 人脸注册失败 (第{attempt+1}次): {e}")
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-                if attempt < 2:
-                    time.sleep(0.1)
-        print(f"[DatabaseService] 人脸注册最终失败: {last_error}")
-        return False
+        def _do(conn):
+            conn.execute(student_sql, (face_id, student_name, registered_at))
+            if embeddings:
+                conn.executemany(embedding_sql, [
+                    (face_id, emb, pose) for emb, pose in embeddings
+                ])
+
+        if not self._retry_write(_do, "人脸注册"):
+            return False
+        print(f"[DatabaseService] 已注册人脸: {face_id} ({student_name}), "
+              f"{len(embeddings)} 个特征向量")
+        return True
 
     def query_registered_students(self) -> List[Dict[str, Any]]:
         """查询所有已注册学生（仅主表，不含 embedding）"""
@@ -173,32 +186,21 @@ class DatabaseService:
         sql = ("INSERT INTO sessions (session_id, face_id, mode, start_time, "
                "video_source_type, file_name) "
                "VALUES (?, ?, ?, ?, ?, ?)")
-        last_error = None
-        for attempt in range(3):
-            try:
-                conn = self._conn_mgr.get_connection()
-                conn.execute(sql, (
-                    session["session_id"],
-                    session.get("face_id"),
-                    session["mode"],
-                    session["start_time"],
-                    session.get("video_source_type", "camera"),
-                    session.get("file_name"),
-                ))
-                conn.commit()
-                print(f"[DatabaseService] 会话已创建: {session['session_id']}")
-                return True
-            except sqlite3.Error as e:
-                last_error = e
-                print(f"[DatabaseService] 创建会话失败 (第{attempt+1}次): {e}")
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-                if attempt < 2:
-                    time.sleep(0.1)
-        print(f"[DatabaseService] 创建会话最终失败: {last_error}")
-        return False
+
+        def _do(conn):
+            conn.execute(sql, (
+                session["session_id"],
+                session.get("face_id"),
+                session["mode"],
+                session["start_time"],
+                session.get("video_source_type", "camera"),
+                session.get("file_name"),
+            ))
+
+        if not self._retry_write(_do, "创建会话"):
+            return False
+        print(f"[DatabaseService] 会话已创建: {session['session_id']}")
+        return True
 
     def end_session(self, session_id: str, end_time: float) -> bool:
         """结束会话，同时通过 SQL 聚合计算 avg_focus_score 和 abnormal_event_count
@@ -225,25 +227,14 @@ class DatabaseService:
                 )
             WHERE session_id = ?
         """
-        last_error = None
-        for attempt in range(3):
-            try:
-                conn = self._conn_mgr.get_connection()
-                conn.execute(sql, (end_time, session_id, session_id, session_id))
-                conn.commit()
-                print(f"[DatabaseService] 会话已结束: {session_id}")
-                return True
-            except sqlite3.Error as e:
-                last_error = e
-                print(f"[DatabaseService] 结束会话失败 (第{attempt+1}次): {e}")
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-                if attempt < 2:
-                    time.sleep(0.1)
-        print(f"[DatabaseService] 结束会话最终失败: {last_error}")
-        return False
+
+        def _do(conn):
+            conn.execute(sql, (end_time, session_id, session_id, session_id))
+
+        if not self._retry_write(_do, "结束会话"):
+            return False
+        print(f"[DatabaseService] 会话已结束: {session_id}")
+        return True
 
     # ────────────────── 评分记录批量写入 ──────────────────
 
@@ -315,34 +306,24 @@ class DatabaseService:
                     ts,
                 ))
 
-        last_error = None
-        for attempt in range(3):
+
+        def _do(conn):
+            if focus_rows:
+                conn.executemany(focus_sql, focus_rows)
+            if alert_rows:
+                conn.executemany(alert_sql, alert_rows)
+
+        if not self._retry_write(_do, "批量写入"):
+            return False
+        # 大批量写入后执行 WAL checkpoint，确保数据持久化到主数据库
+        if len(focus_rows) >= 100 or len(alert_rows) >= 50:
             try:
                 conn = self._conn_mgr.get_connection()
-                conn.execute("BEGIN")
-                if focus_rows:
-                    conn.executemany(focus_sql, focus_rows)
-                if alert_rows:
-                    conn.executemany(alert_sql, alert_rows)
-                conn.commit()
-                # 大批量写入后执行 WAL checkpoint，确保数据持久化到主数据库
-                if len(focus_rows) >= 100 or len(alert_rows) >= 50:
-                    conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-                print(f"[DatabaseService] 批量写入: {len(focus_rows)} 条评分, {len(alert_rows)} 条告警")
-                return True
-            except sqlite3.Error as e:
-                last_error = e
-                print(f"[DatabaseService] 批量写入失败 (第{attempt+1}次): {e}")
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-                if attempt < 2:
-                    time.sleep(0.1)
-
-        raise RuntimeError(
-            f"[DatabaseService] 批量写入最终失败（3次重试均失败）: {last_error}"
-        )
+                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            except sqlite3.Error:
+                pass
+        print(f"[DatabaseService] 批量写入: {len(focus_rows)} 条评分, {len(alert_rows)} 条告警")
+        return True
 
     # ────────────────── 查询 ──────────────────
 
@@ -520,116 +501,5 @@ class DatabaseService:
         """关闭数据库连接"""
         self._conn_mgr.close()
         print("[DatabaseService] 数据库服务已关闭")
-
-    def seed_debug_data(self) -> None:
-        """写入调试数据（幂等：已有数据则跳过）
-
-        写入 3 个已注册人脸、6 个会话及其专注度记录和告警事件。
-        """
-        conn = self._conn_mgr.get_connection()
-        row = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()
-        if row and row[0] > 0:
-            print(f"[DatabaseService] 数据库已有 {row[0]} 条会话，跳过 seed_debug_data")
-            return
-
-        import datetime
-        import random
-        import math
-
-        import numpy as np
-        students = [
-            {"face_id": "face_debug_zhangsan", "student_name": "张三"},
-            {"face_id": "face_debug_lisi", "student_name": "李四"},
-            {"face_id": "face_debug_wangwu", "student_name": "王五"},
-        ]
-        now = time.time()
-        for s in students:
-            # 生成 8 个 placeholder 特征向量（512d float32）
-            dummy_embeddings = [
-                (np.random.randn(512).astype(np.float32).tobytes(),
-                 ["frontal", "left", "right", "down"][i % 4])
-                for i in range(8)
-            ]
-            self.insert_face_embeddings_batch(
-                s["face_id"], s["student_name"], dummy_embeddings, now
-            )
-
-        session_defs = [
-            {"sid": "seed_001", "face_id": "face_debug_zhangsan", "mode": "class",
-             "start": datetime.datetime(2026, 4, 22, 9, 0, 0),
-             "duration_min": 50, "focus_base": 88, "alert_count": 0},
-            {"sid": "seed_002", "face_id": "face_debug_lisi", "mode": "exam",
-             "start": datetime.datetime(2026, 4, 25, 10, 0, 0),
-             "duration_min": 60, "focus_base": 75, "alert_count": 2},
-            {"sid": "seed_003", "face_id": "face_debug_wangwu", "mode": "class",
-             "start": datetime.datetime(2026, 4, 28, 14, 0, 0),
-             "duration_min": 45, "focus_base": 65, "alert_count": 3},
-            {"sid": "seed_004", "face_id": "face_debug_zhangsan", "mode": "exam",
-             "start": datetime.datetime(2026, 5, 2, 8, 30, 0),
-             "duration_min": 55, "focus_base": 45, "alert_count": 4},
-            {"sid": "seed_005", "face_id": "face_debug_lisi", "mode": "class",
-             "start": datetime.datetime(2026, 5, 5, 15, 0, 0),
-             "duration_min": 40, "focus_base": 92, "alert_count": 0},
-            {"sid": "seed_006", "face_id": "face_debug_wangwu", "mode": "exam",
-             "start": datetime.datetime(2026, 5, 8, 9, 30, 0),
-             "duration_min": 50, "focus_base": 58, "alert_count": 2},
-        ]
-
-        alert_types = [
-            ("离席", "检测到离开座位超过30秒"),
-            ("低分告警", "专注度低于阈值60分"),
-            ("姿态异常", "头部持续低倾超过15秒"),
-            ("多人", "画面中检测到多人"),
-            ("行为异常", "检测到走神行为"),
-        ]
-
-        for sd in session_defs:
-            start_ts = sd["start"].timestamp()
-            self.create_session({
-                "session_id": sd["sid"],
-                "face_id": sd["face_id"],
-                "mode": sd["mode"],
-                "start_time": start_ts,
-            })
-
-            duration_s = sd["duration_min"] * 60
-            record_count = random.randint(15, 25)
-            records = []
-            for i in range(record_count):
-                ts = start_ts + (i / record_count) * duration_s
-                variation = lambda: random.uniform(-8, 8)
-                scores = {
-                    "head_pose_score": max(0, min(100, sd["focus_base"] + variation())),
-                    "behavior_score": max(0, min(100, sd["focus_base"] + variation())),
-                    "expression_score": max(0, min(100, sd["focus_base"] + variation())),
-                    "evidence_score": max(0, min(100, sd["focus_base"] + variation())),
-                    "people_score": random.uniform(80, 100),
-                }
-                scores["final_focus_score"] = sum(scores.values()) / len(scores)
-                scores["is_force_zero"] = False
-                records.append({
-                    "session_id": sd["sid"],
-                    "timestamp": ts,
-                    **scores,
-                    "warn_info": None,
-                })
-
-            # 注入告警
-            if sd["alert_count"] > 0:
-                alert_indices = random.sample(
-                    range(record_count), min(sd["alert_count"], record_count)
-                )
-                for idx in alert_indices:
-                    a_type, a_detail = random.choice(alert_types)
-                    records[idx]["warn_info"] = {"type": a_type, "detail": a_detail}
-
-            self.insert_focus_records_batch(records)
-
-            end_ts = start_ts + duration_s
-            self.end_session(sd["sid"], end_ts)
-
-        print(f"[DatabaseService] seed_debug_data 完成: "
-              f"{len(students)} 学生, {len(session_defs)} 会话")
-
 
 database_service = DatabaseService()

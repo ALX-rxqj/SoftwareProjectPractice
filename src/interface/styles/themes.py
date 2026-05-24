@@ -802,3 +802,28 @@ def get_spacing(key: str) -> int:
 def get_radius(key: str) -> int:
     """获取圆角值"""
     return SIZES["radius"][key]
+
+
+def message_box_style() -> str:
+    """QMessageBox 通用样式"""
+    return f"""
+        QMessageBox {{
+            background-color: {COLORS['surface']};
+            color: {COLORS['text']};
+        }}
+        QLabel {{
+            color: {COLORS['text']};
+            background-color: {COLORS['surface']};
+        }}
+        QPushButton {{
+            color: {COLORS['text']};
+            background-color: {COLORS['card']};
+            border: 1px solid {COLORS['border']};
+            border-radius: 6px;
+            padding: 6px 16px;
+            min-width: 80px;
+        }}
+        QPushButton:hover {{
+            background-color: {COLORS['card_hover']};
+        }}
+    """

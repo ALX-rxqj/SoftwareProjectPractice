@@ -23,8 +23,6 @@ from typing import Callable, Optional, Dict, Any, List
 from dataclasses import dataclass
 from enum import Enum
 
-from ..database.database_service import database_service
-
 
 class MonitorMode(Enum):
     CLASS = "class"
@@ -364,16 +362,17 @@ class InterfaceManager:
         print(f"[InterfaceManager] 创建新会话: {self._current_session_id}, "
               f"source={video_source_type}")
 
-        ok = database_service.create_session({
-            "session_id": self._current_session_id,
-            "face_id": face_id,
-            "mode": mode_str,
-            "start_time": start_time,
-            "video_source_type": video_source_type,
-            "file_name": file_name,
-        })
-        if not ok:
-            print(f"[InterfaceManager] ⚠ 会话写入数据库失败！session_id={self._current_session_id}")
+        if self._database_callback:
+            ok = self._database_callback("create_session", {
+                "session_id": self._current_session_id,
+                "face_id": face_id,
+                "mode": mode_str,
+                "start_time": start_time,
+                "video_source_type": video_source_type,
+                "file_name": file_name,
+            })
+            if not ok:
+                print(f"[InterfaceManager] ⚠ 会话写入数据库失败！session_id={self._current_session_id}")
 
         if self._state_estimation_callback:
             self._state_estimation_callback("toggle_analysis", {
@@ -407,7 +406,12 @@ class InterfaceManager:
             })
 
         # 数据库模块更新 end_time + 聚合计算
-        ok = database_service.end_session(session_id, end_time)
+        ok = False
+        if self._database_callback:
+            ok = self._database_callback("end_session", {
+                "session_id": session_id,
+                "end_time": end_time,
+            })
         if not ok:
             print(f"[InterfaceManager] ⚠ 会话结束更新数据库失败！session_id={session_id}")
 

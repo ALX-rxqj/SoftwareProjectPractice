@@ -1,10 +1,10 @@
 from typing import Optional
 
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QStackedLayout, QSplitter, QMenu, QFileDialog, QMessageBox, QApplication
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QStackedLayout, QSplitter, QMessageBox
 
 from .config import WINDOW_WIDTH, WINDOW_HEIGHT, TOP_NAV_HEIGHT, LEFT_BAR_WIDTH, RIGHT_PANEL_WIDTH
-from .styles import get_style, get_spacing, SIZES, COLORS
+from .styles import get_style, get_spacing, SIZES, COLORS, message_box_style
 from .top_nav_bar import TopNavBar
 from .left_sidebar import LeftSideBar
 from .video_widget import VideoWidget, ToastWidget
@@ -15,11 +15,12 @@ from .session_detail_widget import SessionDetailWidget
 from .unified_data_manager import unified_data_manager, CameraInfo, VideoFrameData, FocusResultData
 from .face_registration_dialog import FaceRegistrationDialog
 from .alert_info_dialog import AlertInfoDialog
-from .export_report_util import export_to_excel, export_to_pdf
+from .export_report_util import export_to_excel, export_to_pdf  # noqa: F401 (re-export)
+from .export_controller import export_report
+from .init_coordinator import InitCoordinator
 
 
 class MainWindow(QMainWindow):
-    _init_progress_signal = pyqtSignal(str, float)
 
     def __init__(self):
         super().__init__()
@@ -32,79 +33,24 @@ class MainWindow(QMainWindow):
         self.current_device_id = 0
         self._current_source_type = "camera"  # "camera" 或 "file"
         self._current_file_path: Optional[str] = None
-        self._init_poll_timer = None
         self.init_ui()
         self.toast_widget = ToastWidget(anchor=self.video_widget)
         self.connect_signals()
-        self._init_progress_signal.connect(self._on_init_progress_label)
-        self._start_async_init()
+
+        self._init_coordinator = InitCoordinator(self.video_widget)
+        self._init_coordinator.init_complete.connect(self.init_data)
+        self._init_coordinator.start(
+            on_video_frame=self._on_video_frame_for_display,
+            on_focus_result=self._on_focus_result_for_display,
+            on_camera_list=self.on_camera_list_received,
+            on_file_ended=self._on_file_playback_ended,
+        )
 
     def closeEvent(self, event):
         """窗口关闭时正确关闭数据库连接，确保 WAL checkpoint 执行"""
         from ..database.database_service import database_service
         database_service.shutdown()
         super().closeEvent(event)
-
-    def _start_async_init(self):
-        """快速显示窗口，后台异步加载预处理模型。"""
-
-        need_loading_label = (
-            unified_data_manager.preprocessing_source.value == "real"
-        )
-
-        if need_loading_label:
-            self.video_widget.show_loading_overlay("正在初始化模型...")
-            QApplication.processEvents()
-
-        # 数据库（同步，轻量）
-        if not unified_data_manager.initialize_database():
-            print("[MainWindow] 警告: 数据库初始化失败，历史数据功能不可用")
-
-        # 统一初始化后端（Mock 适配器 / REAL 后端加载）
-        if not unified_data_manager.initialize_all_backends(
-            progress_callback=self._on_init_progress
-        ):
-            print("[MainWindow] 错误: 后端初始化失败")
-
-        unified_data_manager.register_camera_list_callback(self.on_camera_list_received)
-
-        # 注册数据分发回调：MainWindow 作为数据中转中心
-        unified_data_manager.register_video_frame_callback(self._on_video_frame_for_display)
-        unified_data_manager.register_focus_result_callback(self._on_focus_result_for_display)
-
-        # 注册文件播放完成回调
-        unified_data_manager.register_file_playback_ended_callback(self._on_file_playback_ended)
-
-        if need_loading_label:
-            self._init_poll_timer = QTimer()
-            self._init_poll_timer.timeout.connect(self._poll_init_complete)
-            self._init_poll_timer.start(200)
-        else:
-            self.init_data()
-
-    def _on_init_progress(self, message: str, progress: float):
-        """后台线程进度回调 → 通过信号安全传递到 UI 线程"""
-        self._init_progress_signal.emit(message, progress)
-
-    def _on_init_progress_label(self, message: str, progress: float):
-        """UI 线程更新视频覆盖层的进度文本"""
-        self.video_widget.update_loading_progress(message, progress)
-
-    def _poll_init_complete(self):
-        """轮询：检查后台预处理初始化是否完成。"""
-        if not unified_data_manager.init_done:
-            return
-
-        # 初始化完成
-        self._init_poll_timer.stop()
-        self.video_widget.hide_loading_overlay()
-
-        if unified_data_manager.init_success:
-            print("[MainWindow] 已连接真实预处理后端")
-        else:
-            print("[MainWindow] 使用模拟数据模式（预处理模块不可用）")
-
-        self.init_data()
 
     def init_ui(self):
         central_widget = QWidget()
@@ -501,27 +447,7 @@ class MainWindow(QMainWindow):
         confirm_box.setIcon(QMessageBox.Question)
         confirm_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         confirm_box.setDefaultButton(QMessageBox.No)
-        confirm_box.setStyleSheet(f"""
-            QMessageBox {{
-                background-color: {COLORS['surface']};
-                color: {COLORS['text']};
-            }}
-            QLabel {{
-                color: {COLORS['text']};
-                background-color: {COLORS['surface']};
-            }}
-            QPushButton {{
-                color: {COLORS['text']};
-                background-color: {COLORS['card']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 6px;
-                padding: 6px 16px;
-                min-width: 80px;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS['card_hover']};
-            }}
-        """)
+        confirm_box.setStyleSheet(message_box_style())
         if confirm_box.exec_() != QMessageBox.Yes:
             return
 
@@ -550,64 +476,7 @@ class MainWindow(QMainWindow):
 
     def on_export_report_clicked(self, session_data: dict, records: list):
         """导出报告"""
-        session_id = session_data.get("session_id", "")
-        if not session_id or not records:
-            self._msg("warning", "提示", "无有效数据可供导出")
-            return
-
-        # 提前生成告警数据，确保弹窗和导出一致
-        alerts = unified_data_manager.generate_alarm_events(session_id)
-
-        menu = QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                background-color: {COLORS['card']};
-                color: {COLORS['text']};
-                border: 1px solid {COLORS['border_light']};
-                border-radius: 8px;
-                padding: 4px;
-            }}
-            QMenu::item {{
-                padding: 8px 32px;
-                border-radius: 4px;
-            }}
-            QMenu::item:selected {{
-                background-color: {COLORS['primary']};
-            }}
-        """)
-
-        excel_action = menu.addAction("导出 Excel (.xlsx)")
-        pdf_action = menu.addAction("导出 PDF (.pdf)")
-
-        chosen = menu.exec_(self.cursor().pos())
-        if not chosen:
-            return
-
-        if chosen == excel_action:
-            filepath, _ = QFileDialog.getSaveFileName(
-                self, "导出 Excel 报告",
-                f"{session_id}_report.xlsx",
-                "Excel 文件 (*.xlsx)",
-            )
-            if filepath:
-                try:
-                    export_to_excel(session_data, records, alerts, filepath)
-                    self._msg("info", "成功", f"报告已导出至:\n{filepath}")
-                except Exception as e:
-                    self._msg("critical", "错误", f"导出失败: {str(e)}")
-
-        elif chosen == pdf_action:
-            filepath, _ = QFileDialog.getSaveFileName(
-                self, "导出 PDF 报告",
-                f"{session_id}_report.pdf",
-                "PDF 文件 (*.pdf)",
-            )
-            if filepath:
-                try:
-                    export_to_pdf(session_data, records, alerts, filepath)
-                    self._msg("info", "成功", f"报告已导出至:\n{filepath}")
-                except Exception as e:
-                    self._msg("critical", "错误", f"导出失败: {str(e)}")
+        export_report(session_data, records, self)
 
     def on_delete_sessions(self, session_ids: list):
         """批量删除会话及关联数据"""
@@ -647,26 +516,7 @@ class MainWindow(QMainWindow):
         box = QMessageBox()
         box.setWindowTitle(title)
         box.setText(text)
-        box.setStyleSheet(f"""
-            QMessageBox {{
-                background-color: {COLORS['surface']};
-                color: {COLORS['text']};
-            }}
-            QLabel {{
-                color: {COLORS['text']};
-            }}
-            QPushButton {{
-                color: {COLORS['text']};
-                background-color: {COLORS['card']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 6px;
-                padding: 6px 16px;
-                min-width: 80px;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS['card_hover']};
-            }}
-        """)
+        box.setStyleSheet(message_box_style())
         if level == "info":
             box.setIcon(QMessageBox.Information)
         elif level == "warning":
@@ -684,24 +534,5 @@ class MainWindow(QMainWindow):
         box.setIcon(QMessageBox.Question)
         box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         box.setDefaultButton(QMessageBox.No)
-        box.setStyleSheet(f"""
-            QMessageBox {{
-                background-color: {COLORS['surface']};
-                color: {COLORS['text']};
-            }}
-            QLabel {{
-                color: {COLORS['text']};
-            }}
-            QPushButton {{
-                color: {COLORS['text']};
-                background-color: {COLORS['card']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 6px;
-                padding: 6px 16px;
-                min-width: 80px;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS['card_hover']};
-            }}
-        """)
+        box.setStyleSheet(message_box_style())
         return box.exec_() == QMessageBox.Yes
