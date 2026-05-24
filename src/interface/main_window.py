@@ -4,7 +4,7 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QStackedLayout, QSplitter, QMenu, QFileDialog, QMessageBox, QApplication
 
 from .config import WINDOW_WIDTH, WINDOW_HEIGHT, TOP_NAV_HEIGHT, LEFT_BAR_WIDTH, RIGHT_PANEL_WIDTH
-from .styles import get_style, get_spacing, SIZES, COLORS
+from .styles import get_style, get_spacing, SIZES, COLORS, message_box_style
 from .top_nav_bar import TopNavBar
 from .left_sidebar import LeftSideBar
 from .video_widget import VideoWidget, ToastWidget
@@ -501,27 +501,7 @@ class MainWindow(QMainWindow):
         confirm_box.setIcon(QMessageBox.Question)
         confirm_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         confirm_box.setDefaultButton(QMessageBox.No)
-        confirm_box.setStyleSheet(f"""
-            QMessageBox {{
-                background-color: {COLORS['surface']};
-                color: {COLORS['text']};
-            }}
-            QLabel {{
-                color: {COLORS['text']};
-                background-color: {COLORS['surface']};
-            }}
-            QPushButton {{
-                color: {COLORS['text']};
-                background-color: {COLORS['card']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 6px;
-                padding: 6px 16px;
-                min-width: 80px;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS['card_hover']};
-            }}
-        """)
+        confirm_box.setStyleSheet(message_box_style())
         if confirm_box.exec_() != QMessageBox.Yes:
             return
 
@@ -647,26 +627,7 @@ class MainWindow(QMainWindow):
         box = QMessageBox()
         box.setWindowTitle(title)
         box.setText(text)
-        box.setStyleSheet(f"""
-            QMessageBox {{
-                background-color: {COLORS['surface']};
-                color: {COLORS['text']};
-            }}
-            QLabel {{
-                color: {COLORS['text']};
-            }}
-            QPushButton {{
-                color: {COLORS['text']};
-                background-color: {COLORS['card']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 6px;
-                padding: 6px 16px;
-                min-width: 80px;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS['card_hover']};
-            }}
-        """)
+        box.setStyleSheet(message_box_style())
         if level == "info":
             box.setIcon(QMessageBox.Information)
         elif level == "warning":
@@ -684,24 +645,5 @@ class MainWindow(QMainWindow):
         box.setIcon(QMessageBox.Question)
         box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         box.setDefaultButton(QMessageBox.No)
-        box.setStyleSheet(f"""
-            QMessageBox {{
-                background-color: {COLORS['surface']};
-                color: {COLORS['text']};
-            }}
-            QLabel {{
-                color: {COLORS['text']};
-            }}
-            QPushButton {{
-                color: {COLORS['text']};
-                background-color: {COLORS['card']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 6px;
-                padding: 6px 16px;
-                min-width: 80px;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS['card_hover']};
-            }}
-        """)
+        box.setStyleSheet(message_box_style())
         return box.exec_() == QMessageBox.Yes

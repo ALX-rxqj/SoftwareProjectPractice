@@ -554,5 +554,118 @@ class MockDataManager:
         self._simulated_sessions.clear()
         print("[MockDataManager] 缓存已清除")
 
+    @staticmethod
+    def seed_debug_data(db_service) -> None:
+        """写入调试数据（幂等：已有数据则跳过）
+
+        仅当数据库已有会话时跳过，避免重复播种。
+        应由 UnifiedDataManager.initialize_database() 调用。
+        """
+        import datetime
+        import time as _time
+
+        existing = db_service.query_sessions({})
+        if existing:
+            print(f"[MockDataManager] 数据库已有 {len(existing)} 条会话，跳过 seed_debug_data")
+            return
+
+        try:
+            import numpy as np
+        except ImportError:
+            np = None
+
+        students = [
+            {"face_id": "face_debug_zhangsan", "student_name": "张三"},
+            {"face_id": "face_debug_lisi", "student_name": "李四"},
+            {"face_id": "face_debug_wangwu", "student_name": "王五"},
+        ]
+        now = _time.time()
+        for s in students:
+            dummy_embeddings = [
+                (np.random.randn(512).astype(np.float32).tobytes() if np is not None
+                 else b"\x00" * 2048,
+                 ["frontal", "left", "right", "down"][i % 4])
+                for i in range(8)
+            ]
+            db_service.insert_face_embeddings_batch(
+                s["face_id"], s["student_name"], dummy_embeddings, now
+            )
+
+        session_defs = [
+            {"sid": "seed_001", "face_id": "face_debug_zhangsan", "mode": "class",
+             "start": datetime.datetime(2026, 4, 22, 9, 0, 0),
+             "duration_min": 50, "focus_base": 88, "alert_count": 0},
+            {"sid": "seed_002", "face_id": "face_debug_lisi", "mode": "exam",
+             "start": datetime.datetime(2026, 4, 25, 10, 0, 0),
+             "duration_min": 60, "focus_base": 75, "alert_count": 2},
+            {"sid": "seed_003", "face_id": "face_debug_wangwu", "mode": "class",
+             "start": datetime.datetime(2026, 4, 28, 14, 0, 0),
+             "duration_min": 45, "focus_base": 65, "alert_count": 3},
+            {"sid": "seed_004", "face_id": "face_debug_zhangsan", "mode": "exam",
+             "start": datetime.datetime(2026, 5, 2, 8, 30, 0),
+             "duration_min": 55, "focus_base": 45, "alert_count": 4},
+            {"sid": "seed_005", "face_id": "face_debug_lisi", "mode": "class",
+             "start": datetime.datetime(2026, 5, 5, 15, 0, 0),
+             "duration_min": 40, "focus_base": 92, "alert_count": 0},
+            {"sid": "seed_006", "face_id": "face_debug_wangwu", "mode": "exam",
+             "start": datetime.datetime(2026, 5, 8, 9, 30, 0),
+             "duration_min": 50, "focus_base": 58, "alert_count": 2},
+        ]
+
+        alert_types = [
+            ("离席", "检测到离开座位超过30秒"),
+            ("低分告警", "专注度低于阈值60分"),
+            ("姿态异常", "头部持续低倾超过15秒"),
+            ("多人", "画面中检测到多人"),
+            ("行为异常", "检测到走神行为"),
+        ]
+
+        for sd in session_defs:
+            start_ts = sd["start"].timestamp()
+            db_service.create_session({
+                "session_id": sd["sid"],
+                "face_id": sd["face_id"],
+                "mode": sd["mode"],
+                "start_time": start_ts,
+            })
+
+            duration_s = sd["duration_min"] * 60
+            record_count = random.randint(15, 25)
+            records = []
+            for i in range(record_count):
+                ts = start_ts + (i / record_count) * duration_s
+                variation = lambda: random.uniform(-8, 8)
+                scores = {
+                    "head_pose_score": max(0, min(100, sd["focus_base"] + variation())),
+                    "behavior_score": max(0, min(100, sd["focus_base"] + variation())),
+                    "expression_score": max(0, min(100, sd["focus_base"] + variation())),
+                    "evidence_score": max(0, min(100, sd["focus_base"] + variation())),
+                    "people_score": random.uniform(80, 100),
+                }
+                scores["final_focus_score"] = sum(scores.values()) / len(scores)
+                scores["is_force_zero"] = False
+                records.append({
+                    "session_id": sd["sid"],
+                    "timestamp": ts,
+                    **scores,
+                    "warn_info": None,
+                })
+
+            if sd["alert_count"] > 0:
+                alert_indices = random.sample(
+                    range(record_count), min(sd["alert_count"], record_count)
+                )
+                for idx in alert_indices:
+                    a_type, a_detail = random.choice(alert_types)
+                    records[idx]["warn_info"] = {"type": a_type, "detail": a_detail}
+
+            db_service.insert_focus_records_batch(records)
+
+            end_ts = start_ts + duration_s
+            db_service.end_session(sd["sid"], end_ts)
+
+        print(f"[MockDataManager] seed_debug_data 完成: "
+              f"{len(students)} 学生, {len(session_defs)} 会话")
+
 
 mock_data_manager = MockDataManager()

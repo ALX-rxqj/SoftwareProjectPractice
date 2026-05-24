@@ -13,13 +13,12 @@
 
 import time as _time
 import threading
-from typing import Callable, Optional, Dict, Any, List
+from typing import Callable, Dict, Any, List, Optional
 from enum import Enum
-from dataclasses import dataclass
 
 from PyQt5.QtCore import QTimer
 
-from .interface_manager import interface_manager
+from .interface_manager import interface_manager, VideoFrameData, FocusResultData, CameraInfo
 from .mock_data_manager import mock_data_manager
 from ..database.database_service import database_service
 
@@ -29,33 +28,7 @@ class DataSource(Enum):
     REAL = "real"
 
 
-@dataclass
-class VideoFrameData:
-    frame: Any
-    faces: list
-    timestamp: float
-    frame_progress: Optional[Dict[str, int]] = None
-
-
-@dataclass
-class FocusResultData:
-    timestamp: float
-    session_id: str
-    head_pose_score: float
-    behavior_score: float
-    expression_score: float
-    evidence_score: float
-    people_score: float
-    final_focus_score: float
-    is_force_zero: bool
-    is_over_threshold: bool = False
-    warn_msg: Optional[Dict[str, str]] = None
-
-
-@dataclass
-class CameraInfo:
-    device_id: int
-    device_name: str
+__all__ = ["VideoFrameData", "FocusResultData", "CameraInfo"]
 
 
 class UnifiedDataManager:
@@ -109,7 +82,7 @@ class UnifiedDataManager:
         try:
             database_service.initialize(db_path)
             print(f"[UnifiedDataManager] 数据库已初始化: {db_path}")
-            database_service.seed_debug_data()
+            mock_data_manager.seed_debug_data(database_service)
             return True
         except Exception as e:
             print(f"[UnifiedDataManager] 数据库初始化失败: {e}")
@@ -875,19 +848,6 @@ class UnifiedDataManager:
         except Exception as e:
             print(f"[UnifiedDataManager] 特征提取模块初始化失败: {e}，"
                   "状态估计将使用内部模拟数据")
-
-    # ── 保留旧方法作为兼容（内部转发到统一入口） ──
-
-    def initialize_real_backend(
-        self,
-        progress_callback: Optional[Callable[[str, float], None]] = None,
-    ) -> bool:
-        """已废弃：请使用 initialize_all_backends。保留用于向后兼容。"""
-        return self._init_real_preprocessing_backend(progress_callback)
-
-    def initialize_state_estimation_backend(self) -> bool:
-        """已废弃：请使用 initialize_all_backends。保留用于向后兼容。"""
-        return self._init_state_estimation_backend()
 
     def delete_sessions(self, session_ids: List[str]) -> Dict[str, Any]:
         print(f"[UnifiedDataManager] 删除会话请求: {len(session_ids)} 条")
