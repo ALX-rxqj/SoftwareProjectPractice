@@ -3,7 +3,6 @@ from .top_nav_bar import TopNavBar
 from .left_sidebar import LeftSideBar
 from .video_widget import VideoWidget
 from .right_panel import RightPanel
-from .face_list_widget import FaceListWidget
 from .data_record_widget import DataRecordWidget
 from .interface_manager import InterfaceManager, interface_manager, VideoFrameData, FocusResultData, MonitorMode
 from .mock_data_manager import MockDataManager, mock_data_manager, ScoreConfig
@@ -20,7 +19,6 @@ __all__ = [
     "LeftSideBar",
     "VideoWidget",
     "RightPanel",
-    "FaceListWidget",
     "DataRecordWidget",
     "InterfaceManager",
     "interface_manager",
