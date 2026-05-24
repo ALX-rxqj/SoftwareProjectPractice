@@ -162,6 +162,18 @@ class UnifiedDataManager:
         interface_manager.register_video_frame_callback(self._on_interface_video_frame)
         interface_manager.register_focus_result_callback(self._on_interface_focus_result)
         interface_manager.register_camera_list_callback(self._on_interface_camera_list)
+        interface_manager.register_database_callback(self._on_interface_database_command)
+
+    def _on_interface_database_command(self, command: str, params: dict):
+        if command == "create_session":
+            return database_service.create_session(params)
+        elif command == "end_session":
+            return database_service.end_session(
+                params["session_id"], params["end_time"]
+            )
+        elif command == "query_sessions":
+            return database_service.query_sessions(params)
+        return None
 
     def _on_interface_video_frame(self, data):
         if self._video_frame_callback:
@@ -267,41 +279,32 @@ class UnifiedDataManager:
                     file_name = mock_data_manager.current_file_name or ""
                     interface_manager.on_file_playback_ended(file_name)
 
+    @staticmethod
+    def _make_focus_result(data: dict) -> FocusResultData:
+        return FocusResultData(
+            timestamp=data.get("timestamp", 0.0),
+            session_id=data.get("session_id", ""),
+            head_pose_score=data.get("head_pose_score", 0.0),
+            behavior_score=data.get("behavior_score", 0.0),
+            expression_score=data.get("expression_score", 0.0),
+            evidence_score=data.get("evidence_score", 0.0),
+            people_score=data.get("people_score", 0.0),
+            final_focus_score=data.get("final_focus_score", 0.0),
+            is_force_zero=data.get("is_force_zero", False),
+            is_over_threshold=data.get("is_over_threshold", False),
+            warn_msg=data.get("warn_info"),
+        )
+
     def push_focus_result(self, data: Optional[Dict] = None):
         """推送专注度结果数据"""
+        source_dict = None
         if self._state_estimation_source == DataSource.REAL:
-            if data is not None and self._focus_result_callback:
-                result = FocusResultData(
-                    timestamp=data.get("timestamp", 0.0),
-                    session_id=data.get("session_id", ""),
-                    head_pose_score=data.get("head_pose_score", 0.0),
-                    behavior_score=data.get("behavior_score", 0.0),
-                    expression_score=data.get("expression_score", 0.0),
-                    evidence_score=data.get("evidence_score", 0.0),
-                    people_score=data.get("people_score", 0.0),
-                    final_focus_score=data.get("final_focus_score", 0.0),
-                    is_force_zero=data.get("is_force_zero", False),
-                    is_over_threshold=data.get("is_over_threshold", False),
-                    warn_msg=data.get("warn_info")
-                )
-                self._focus_result_callback(result)
+            source_dict = data
         else:
-            mock = mock_data_manager.generate_focus_result()
-            if self._focus_result_callback and mock:
-                result = FocusResultData(
-                    timestamp=mock.get("timestamp", 0.0),
-                    session_id=mock.get("session_id", ""),
-                    head_pose_score=mock.get("head_pose_score", 0.0),
-                    behavior_score=mock.get("behavior_score", 0.0),
-                    expression_score=mock.get("expression_score", 0.0),
-                    evidence_score=mock.get("evidence_score", 0.0),
-                    people_score=mock.get("people_score", 0.0),
-                    final_focus_score=mock.get("final_focus_score", 0.0),
-                    is_force_zero=mock.get("is_force_zero", False),
-                    is_over_threshold=mock.get("is_over_threshold", False),
-                    warn_msg=mock.get("warn_info")
-                )
-                self._focus_result_callback(result)
+            source_dict = mock_data_manager.generate_focus_result()
+
+        if source_dict is not None and self._focus_result_callback:
+            self._focus_result_callback(self._make_focus_result(source_dict))
 
     def push_camera_list(self, camera_list: List[Dict[str, Any]]):
         cameras = [
