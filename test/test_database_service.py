@@ -84,8 +84,10 @@ class TestSessionCRUD:
         # 先写入一些评分记录以确保 avg_focus_score 可计算
         records = [
             {"session_id": sid, "timestamp": 1000.0 + i,
-             "head_pose_score": 80.0, "behavior_score": 85.0,
-             "expression_score": 75.0, "evidence_score": 80.0,
+             "head_pose_score": 80.0, "eye_score": 85.0,
+             "yawn_score": 75.0, "distance_score": 80.0,
+             "behavior_score": 0.0, "expression_score": 0.0,
+             "evidence_score": 80.0,
              "people_score": 100.0, "final_focus_score": float(80 + i),
              "is_force_zero": False, "is_over_threshold": False}
             for i in range(3)
@@ -140,8 +142,10 @@ class TestFocusRecords:
         })
         records = [
             {"session_id": sid, "timestamp": 1000.0 + i * 2,
-             "head_pose_score": 85.0, "behavior_score": 90.0,
-             "expression_score": 75.0, "evidence_score": 83.0,
+             "head_pose_score": 85.0, "eye_score": 90.0,
+             "yawn_score": 75.0, "distance_score": 80.0,
+             "behavior_score": 0.0, "expression_score": 0.0,
+             "evidence_score": 83.0,
              "people_score": 100.0, "final_focus_score": 83.0,
              "is_force_zero": False, "is_over_threshold": False}
             for i in range(5)
@@ -179,17 +183,19 @@ class TestAlertEvents:
         })
         records = [
             {"session_id": sid, "timestamp": 1000.0,
-             "head_pose_score": 50.0, "behavior_score": 30.0,
-             "expression_score": 40.0, "evidence_score": 35.0,
+             "head_pose_score": 50.0, "eye_score": 30.0,
+             "yawn_score": 40.0, "distance_score": 35.0,
+             "behavior_score": 0.0, "expression_score": 0.0,
+             "evidence_score": 35.0,
              "people_score": 100.0, "final_focus_score": 35.0,
              "is_force_zero": False, "is_over_threshold": False,
-             "warn_info": {"type": "low_behavior", "detail": "行为评分过低"}},
+             "warn_info": {"type": "low_evidence", "detail": "证据评分过低"}},
         ]
         db_service.insert_focus_records_batch(records)
 
         alerts = db_service.query_alert_events(sid)
         assert len(alerts) == 1
-        assert alerts[0]["alert_type"] == "low_behavior"
+        assert alerts[0]["alert_type"] == "low_evidence"
 
 
 # ============================================================
@@ -239,8 +245,10 @@ class TestCascadeDelete:
         })
         db_service.insert_focus_records_batch([
             {"session_id": sid, "timestamp": 1000.0,
-             "head_pose_score": 80.0, "behavior_score": 85.0,
-             "expression_score": 75.0, "evidence_score": 80.0,
+             "head_pose_score": 80.0, "eye_score": 85.0,
+             "yawn_score": 75.0, "distance_score": 80.0,
+             "behavior_score": 0.0, "expression_score": 0.0,
+             "evidence_score": 80.0,
              "people_score": 100.0, "final_focus_score": 80.0,
              "is_force_zero": False, "is_over_threshold": False,
              "warn_info": {"type": "test", "detail": "test"}},

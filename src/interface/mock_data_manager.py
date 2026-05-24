@@ -44,16 +44,19 @@ class MockFocusRecord:
     """模拟专注度评分记录（对应专注度评分记录表）"""
     session_id: str
     timestamp: float
-    head_pose_score: float
-    behavior_score: float
-    expression_score: float
-    evidence_score: float
-    people_score: float
-    final_focus_score: float
-    is_force_zero: bool
-    is_over_threshold: bool
-    date: str
-    time: str
+    head_pose_score: float = 0.0
+    eye_score: float = 0.0
+    yawn_score: float = 0.0
+    distance_score: float = 0.0
+    behavior_score: float = 0.0  # 弃用
+    expression_score: float = 0.0  # 弃用
+    evidence_score: float = 0.0
+    people_score: float = 0.0
+    final_focus_score: float = 0.0
+    is_force_zero: bool = False
+    is_over_threshold: bool = False
+    date: str = ""
+    time: str = ""
 
 
 class MockDataManager:
@@ -74,8 +77,9 @@ class MockDataManager:
 
         self._score_configs = {
             "head_pose": ScoreConfig(88, 60, 100, 8, 0.2),
-            "behavior": ScoreConfig(92, 70, 100, 10, 0.3),
-            "expression": ScoreConfig(85, 60, 100, 10, 0.25),
+            "eye": ScoreConfig(92, 70, 100, 10, 0.25),
+            "yawn": ScoreConfig(90, 70, 100, 5, 0.15),
+            "distance": ScoreConfig(85, 60, 100, 10, 0.15),
             "evidence": ScoreConfig(90, 70, 100, 5, 0.15),
             "people": ScoreConfig(95, 80, 100, 3, 0.1),
         }
@@ -191,8 +195,11 @@ class MockDataManager:
             "timestamp": random.uniform(0, 1000),
             "session_id": session_id,
             "head_pose_score": scores.get("head_pose", 85),
-            "behavior_score": scores.get("behavior", 85),
-            "expression_score": scores.get("expression", 85),
+            "eye_score": scores.get("eye", 85),
+            "yawn_score": scores.get("yawn", 85),
+            "distance_score": scores.get("distance", 85),
+            "behavior_score": 0.0,
+            "expression_score": 0.0,
             "evidence_score": scores.get("evidence", 85),
             "people_score": scores.get("people", 90),
             "final_focus_score": scores.get("final_focus", 85.0),
@@ -359,8 +366,11 @@ class MockDataManager:
                         session_id=session.session_id,
                         timestamp=timestamp,
                         head_pose_score=scores.get("head_pose", 85),
-                        behavior_score=scores.get("behavior", 85),
-                        expression_score=scores.get("expression", 85),
+                        eye_score=scores.get("eye", 85),
+                        yawn_score=scores.get("yawn", 85),
+                        distance_score=scores.get("distance", 85),
+                        behavior_score=0.0,
+                        expression_score=0.0,
                         evidence_score=scores.get("evidence", 85),
                         people_score=scores.get("people", 90),
                         final_focus_score=scores.get("final_focus", 85.0),
@@ -381,6 +391,9 @@ class MockDataManager:
                 "date": record.date,
                 "time": record.time,
                 "head_pose_score": record.head_pose_score,
+                "eye_score": record.eye_score,
+                "yawn_score": record.yawn_score,
+                "distance_score": record.distance_score,
                 "behavior_score": record.behavior_score,
                 "expression_score": record.expression_score,
                 "evidence_score": record.evidence_score,
@@ -460,8 +473,11 @@ class MockDataManager:
                 "date": date,
                 "time": st,
                 "head_pose_score": scores.get("head_pose", 85),
-                "behavior_score": scores.get("behavior", 85),
-                "expression_score": scores.get("expression", 85),
+                "eye_score": scores.get("eye", 85),
+                "yawn_score": scores.get("yawn", 85),
+                "distance_score": scores.get("distance", 85),
+                "behavior_score": 0.0,
+                "expression_score": 0.0,
                 "evidence_score": scores.get("evidence", 85),
                 "people_score": scores.get("people", 90),
                 "final_focus_score": scores.get("final_focus", 85.0),
@@ -637,13 +653,20 @@ class MockDataManager:
                 variation = lambda: random.uniform(-8, 8)
                 scores = {
                     "head_pose_score": max(0, min(100, sd["focus_base"] + variation())),
-                    "behavior_score": max(0, min(100, sd["focus_base"] + variation())),
-                    "expression_score": max(0, min(100, sd["focus_base"] + variation())),
+                    "eye_score": max(0, min(100, sd["focus_base"] + variation())),
+                    "yawn_score": max(0, min(100, sd["focus_base"] + variation())),
+                    "distance_score": max(0, min(100, sd["focus_base"] + variation())),
+                    "behavior_score": 0.0,
+                    "expression_score": 0.0,
                     "evidence_score": max(0, min(100, sd["focus_base"] + variation())),
                     "people_score": random.uniform(80, 100),
                 }
-                scores["final_focus_score"] = sum(scores.values()) / len(scores)
+                scores["final_focus_score"] = sum(
+                    v for k, v in scores.items()
+                    if k not in ("behavior_score", "expression_score")
+                ) / (len(scores) - 2)
                 scores["is_force_zero"] = False
+                scores["is_over_threshold"] = False
                 records.append({
                     "session_id": sd["sid"],
                     "timestamp": ts,

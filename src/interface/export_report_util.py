@@ -40,10 +40,11 @@ def _generate_focus_chart_image(records: list) -> BytesIO:
     line_configs = [
         ("final_focus_score", "最终专注度", cc[0], 2.5),
         ("head_pose_score", "头部姿态", cc[1], 1.5),
-        ("behavior_score", "行为动作", cc[2], 1.5),
-        ("expression_score", "表情评分", cc[3], 1.5),
-        ("evidence_score", "证据理论", cc[4], 1.5),
-        ("people_score", "人数项", cc[5], 1.5),
+        ("eye_score", "眼部状态", cc[2], 1.5),
+        ("yawn_score", "哈欠检测", cc[3], 1.5),
+        ("distance_score", "人脸距离", cc[4], 1.5),
+        ("evidence_score", "证据理论", cc[5], 1.5),
+        ("people_score", "人数项", cc[6], 1.5),
     ]
 
     for key, label, color, lw in line_configs:
@@ -157,10 +158,10 @@ def export_to_excel(session: dict, records: list, alerts: list, filepath: str):
     ws2 = wb.create_sheet("关键帧专注度")
 
     record_headers = [
-        "时间戳(s)", "头部姿态", "行为动作", "表情",
-        "证据理论", "人数项", "最终专注度", "强制置0"
+        "时间戳(s)", "头部姿态", "眼部状态", "哈欠检测",
+        "人脸距离", "证据理论", "人数项", "最终专注度", "强制置0"
     ]
-    col_widths = [14, 12, 12, 12, 12, 12, 14, 12]
+    col_widths = [14, 12, 12, 12, 12, 12, 12, 14, 12]
     for i, w in enumerate(col_widths, 1):
         ws2.column_dimensions[get_column_letter(i)].width = w
 
@@ -170,8 +171,9 @@ def export_to_excel(session: dict, records: list, alerts: list, filepath: str):
         values = [
             f"{record.get('timestamp', 0):.1f}",
             f"{record.get('head_pose_score', 0):.1f}",
-            f"{record.get('behavior_score', 0):.1f}",
-            f"{record.get('expression_score', 0):.1f}",
+            f"{record.get('eye_score', 0):.1f}",
+            f"{record.get('yawn_score', 0):.1f}",
+            f"{record.get('distance_score', 0):.1f}",
             f"{record.get('evidence_score', 0):.1f}",
             f"{record.get('people_score', 0):.1f}",
             f"{record.get('final_focus_score', 0):.1f}",
@@ -329,22 +331,23 @@ def export_to_pdf(session: dict, records: list, alerts: list, filepath: str):
     elements.append(Spacer(1, 2 * mm))
 
     # 记录表格（取前 30 条摘要避免过长）
-    table_headers = ["时间戳", "头部姿态", "行为动作", "表情", "证据理论", "人数项", "最终专注度"]
+    table_headers = ["时间戳", "头部姿态", "眼部状态", "哈欠检测", "人脸距离", "证据理论", "人数项", "最终专注度"]
     table_data = [table_headers]
     display_records = records
     for r in display_records:
         table_data.append([
             f"{r.get('timestamp', 0):.1f}s",
             f"{r.get('head_pose_score', 0):.1f}",
-            f"{r.get('behavior_score', 0):.1f}",
-            f"{r.get('expression_score', 0):.1f}",
+            f"{r.get('eye_score', 0):.1f}",
+            f"{r.get('yawn_score', 0):.1f}",
+            f"{r.get('distance_score', 0):.1f}",
             f"{r.get('evidence_score', 0):.1f}",
             f"{r.get('people_score', 0):.1f}",
             f"{r.get('final_focus_score', 0):.1f}",
         ])
 
     avail = doc.width
-    col_w = avail / 7.0
+    col_w = avail / 8.0
     record_table = Table(table_data, colWidths=[col_w] * 7, repeatRows=1)
     record_table.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, -1), "MicrosoftYaHei"),

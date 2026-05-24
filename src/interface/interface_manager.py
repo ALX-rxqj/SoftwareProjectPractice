@@ -50,13 +50,16 @@ class FocusResultData:
     """SEI-01 数据结构"""
     timestamp: float
     session_id: str
-    head_pose_score: float
-    behavior_score: float
-    expression_score: float
-    evidence_score: float
-    people_score: float
-    final_focus_score: float
-    is_force_zero: bool
+    head_pose_score: float = 0.0
+    eye_score: float = 0.0
+    yawn_score: float = 0.0
+    distance_score: float = 0.0
+    behavior_score: float = 0.0   # 弃用，保留向后兼容
+    expression_score: float = 0.0  # 弃用，保留向后兼容
+    evidence_score: float = 0.0
+    people_score: float = 0.0
+    final_focus_score: float = 0.0
+    is_force_zero: bool = False
     is_over_threshold: bool = False
     warn_msg: Optional[Dict[str, str]] = None
 
@@ -186,19 +189,24 @@ class InterfaceManager:
                 - timestamp: float
                 - session_id: str
                 - head_pose_score: float
-                - behavior_score: float
-                - expression_score: float
+                - eye_score: float
+                - yawn_score: float
+                - distance_score: float
                 - evidence_score: float
                 - people_score: float
                 - final_focus_score: float
                 - is_force_zero: bool
-                - warn_msg: {"type":str, "detail":str} or None
+                - is_over_threshold: bool
+                - warn_info: {"type":str, "detail":str} or None
         """
         if self._focus_result_callback:
             result = FocusResultData(
                 timestamp=data.get("timestamp", 0.0),
                 session_id=data.get("session_id", ""),
                 head_pose_score=data.get("head_pose_score", 0.0),
+                eye_score=data.get("eye_score", 0.0),
+                yawn_score=data.get("yawn_score", 0.0),
+                distance_score=data.get("distance_score", 0.0),
                 behavior_score=data.get("behavior_score", 0.0),
                 expression_score=data.get("expression_score", 0.0),
                 evidence_score=data.get("evidence_score", 0.0),

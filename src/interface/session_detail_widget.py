@@ -88,10 +88,10 @@ class SessionDetailWidget(QFrame):
 
         # ---- 评分表格 ----
         self.record_table = QTableWidget()
-        self.record_table.setColumnCount(10)
+        self.record_table.setColumnCount(11)
         self.record_table.setHorizontalHeaderLabels([
-            "时间戳", "头部姿态", "行为动作", "表情",
-            "证据理论", "人数项", "最终专注度", "强制置0",
+            "时间戳", "头部姿态", "眼部状态", "哈欠检测",
+            "人脸距离", "证据理论", "人数项", "最终专注度", "强制置0",
             "是否达到阈值", "会话ID",
         ])
         self.record_table.setFont(QFont(*get_font("sm", "normal", "data")))
@@ -185,8 +185,9 @@ class SessionDetailWidget(QFrame):
             items = [
                 QTableWidgetItem(f"{record.get('timestamp', 0):.1f}s"),
                 QTableWidgetItem(f"{record.get('head_pose_score', 0):.1f}"),
-                QTableWidgetItem(f"{record.get('behavior_score', 0):.1f}"),
-                QTableWidgetItem(f"{record.get('expression_score', 0):.1f}"),
+                QTableWidgetItem(f"{record.get('eye_score', 0):.1f}"),
+                QTableWidgetItem(f"{record.get('yawn_score', 0):.1f}"),
+                QTableWidgetItem(f"{record.get('distance_score', 0):.1f}"),
                 QTableWidgetItem(f"{record.get('evidence_score', 0):.1f}"),
                 QTableWidgetItem(f"{record.get('people_score', 0):.1f}"),
                 QTableWidgetItem(f"{record.get('final_focus_score', 0):.1f}"),
@@ -199,7 +200,7 @@ class SessionDetailWidget(QFrame):
                 item.setTextAlignment(Qt.AlignCenter)
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
 
-                if col == 6:
+                if col == 7:
                     final_focus = record.get("final_focus_score", 0)
                     if final_focus >= 70:
                         item.setForeground(QColor(COLORS["focus_high"]))
@@ -207,9 +208,9 @@ class SessionDetailWidget(QFrame):
                         item.setForeground(QColor(COLORS["focus_low"]))
                     else:
                         item.setForeground(QColor(COLORS["focus_medium"]))
-                if col == 7 and record.get("is_force_zero", False):
+                if col == 8 and record.get("is_force_zero", False):
                     item.setForeground(QColor(COLORS["danger"]))
-                if col == 8 and record.get("is_over_threshold", False):
+                if col == 9 and record.get("is_over_threshold", False):
                     item.setForeground(QColor(COLORS["danger"]))
 
                 self.record_table.setItem(row, col, item)
@@ -229,8 +230,8 @@ class SessionDetailWidget(QFrame):
 
         if chart_options is None:
             chart_options = {
-                "final_focus": True, "head_pose": True, "behavior": True,
-                "expression": False, "evidence": False, "people": False,
+                "final_focus": True, "head_pose": True, "eye": True,
+                "yawn": False, "distance": False, "evidence": False, "people": False,
             }
 
         n = len(records)
@@ -248,10 +249,11 @@ class SessionDetailWidget(QFrame):
         line_configs = [
             ("final_focus", "最终专注度", cc[0], 2.5),
             ("head_pose", "头部姿态", cc[1], 1.5),
-            ("behavior", "行为动作", cc[2], 1.5),
-            ("expression", "表情评分", cc[3], 1.5),
-            ("evidence", "证据理论", cc[4], 1.5),
-            ("people", "人数项", cc[5], 1.5),
+            ("eye", "眼部状态", cc[2], 1.5),
+            ("yawn", "哈欠检测", cc[3], 1.5),
+            ("distance", "人脸距离", cc[4], 1.5),
+            ("evidence", "证据理论", cc[5], 1.5),
+            ("people", "人数项", cc[6], 1.5),
         ]
 
         for key, label, color, lw in line_configs:

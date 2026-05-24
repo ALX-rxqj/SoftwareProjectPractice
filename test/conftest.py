@@ -16,7 +16,7 @@ from src.state_estimation.contracts import (
     FocusResultData,
     MonitorMode,
     WarnInfo,
-    WARN_LOW_BEHAVIOR,
+    WARN_EYE_STATE,
 )
 from src.state_estimation.estimator import FocusEstimator
 from src.state_estimation.downsampler import Downsampler
@@ -126,8 +126,9 @@ def _make_focus_result(
     session_id="test_session",
     timestamp=1000.0,
     head_pose_score=90.0,
-    behavior_score=85.0,
-    expression_score=80.0,
+    eye_score=85.0,
+    yawn_score=80.0,
+    distance_score=50.0,
     evidence_score=85.0,
     people_score=100.0,
     final_focus_score=85.0,
@@ -139,8 +140,9 @@ def _make_focus_result(
         timestamp=timestamp,
         session_id=session_id,
         head_pose_score=head_pose_score,
-        behavior_score=behavior_score,
-        expression_score=expression_score,
+        eye_score=eye_score,
+        yawn_score=yawn_score,
+        distance_score=distance_score,
         evidence_score=evidence_score,
         people_score=people_score,
         final_focus_score=final_focus_score,
@@ -160,7 +162,7 @@ def sample_focus_result_low():
     return _make_focus_result(
         final_focus_score=30.0,
         warn_candidates=(
-            WarnInfo(warn_type=WARN_LOW_BEHAVIOR, detail="行为动作评分过低: 25"),
+            WarnInfo(warn_type=WARN_EYE_STATE, detail="眼部状态评分过低: 25"),
         ),
     )
 

@@ -68,10 +68,10 @@ FORCE_ZERO_THRESHOLD = {
 TEMPORAL_DOWN_PITCH_THRESHOLD = 8       # pitch 低头触发线（与 HEAD_POSE_NORMAL_PITCH_DOWN 一致）
 TEMPORAL_DOWN_YAW_NORMAL = 8            # yaw 正常范围上限（与 HEAD_POSE_NORMAL_YAW["class"] 一致）
 TEMPORAL_GAP_TOLERANCE_FRAMES = 90      # 间隙容忍帧数（3s @30fps）
-TEMPORAL_T_MAX_FRAMES = 100             # 累计帧数阈值（30s @30fps）
-TEMPORAL_STEP_FRAMES = 30              # 每步帧数（5s @30fps）
-TEMPORAL_STEP_MASS = 0.1                # 每步增加 mass 量
-TEMPORAL_MAX_MASS = 0.6                 # 时序 mass 上限
+TEMPORAL_T_MAX_FRAMES = 900             # 累计帧数阈值（30s @30fps）
+TEMPORAL_STEP_FRAMES = 150              # 每步帧数（5s @30fps）
+TEMPORAL_STEP_MASS = 0.2                # 每步增加 mass 量
+TEMPORAL_MAX_MASS = 1.0                 # 时序 mass 上限
 
 # --- 人数评分 ---
 PEOPLE_SCORE_SINGLE = 100.0

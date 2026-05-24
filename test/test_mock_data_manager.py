@@ -32,7 +32,7 @@ class TestRealtimeScores:
     def test_has_all_dimension_keys(self, fresh_mock):
         """generate_realtime_scores 包含所有评分维度"""
         scores = fresh_mock.generate_realtime_scores()
-        expected_keys = {"head_pose", "behavior", "expression", "evidence",
+        expected_keys = {"head_pose", "eye", "yawn", "distance", "evidence",
                         "people", "final_focus", "warn_info"}
         for key in expected_keys:
             assert key in scores, f"缺少键: {key}"
@@ -41,7 +41,7 @@ class TestRealtimeScores:
         """所有评分在 [0, 100] 内"""
         for _ in range(20):
             scores = fresh_mock.generate_realtime_scores()
-            for key in ["head_pose", "behavior", "expression", "evidence", "people"]:
+            for key in ["head_pose", "eye", "yawn", "distance", "evidence", "people"]:
                 assert 0 <= scores[key] <= 100, f"{key}={scores[key]} 超出范围"
             assert 0 <= scores["final_focus"] <= 100
 
@@ -63,8 +63,9 @@ class TestFocusResult:
         """generate_focus_result 包含 SEI-01 全部字段"""
         result = fresh_mock.generate_focus_result("test_sid")
         expected_keys = {
-            "timestamp", "session_id", "head_pose_score", "behavior_score",
-            "expression_score", "evidence_score", "people_score",
+            "timestamp", "session_id", "head_pose_score", "eye_score",
+            "yawn_score", "distance_score", "behavior_score", "expression_score",
+            "evidence_score", "people_score",
             "final_focus_score", "is_force_zero", "is_over_threshold", "warn_info",
         }
         assert set(result.keys()) == expected_keys

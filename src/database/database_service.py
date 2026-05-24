@@ -244,10 +244,11 @@ class DatabaseService:
         Args:
             records: [{
                 "session_id": str, "timestamp": float,
-                "head_pose_score": float, "behavior_score": float,
-                "expression_score": float, "evidence_score": float,
-                "people_score": float, "final_focus_score": float,
-                "is_force_zero": bool,
+                "head_pose_score": float, "eye_score": float,
+                "yawn_score": float, "distance_score": float,
+                "evidence_score": float, "people_score": float,
+                "final_focus_score": float, "is_force_zero": bool,
+                "is_over_threshold": bool,
                 "warn_info": {"type": str, "detail": str} | None
             }, ...]
 
@@ -266,14 +267,15 @@ class DatabaseService:
         focus_sql = """
             INSERT INTO focus_records (
                 session_id, timestamp, date, time,
-                head_pose_score, behavior_score, expression_score,
+                head_pose_score, eye_score, yawn_score, distance_score,
+                behavior_score, expression_score,
                 evidence_score, people_score, final_focus_score, is_force_zero,
                 is_over_threshold
             ) VALUES (
                 ?, ?,
                 strftime('%Y-%m-%d', ?, 'unixepoch'),
                 strftime('%H:%M:%S', ?, 'unixepoch'),
-                ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
         """
         alert_sql = """
@@ -289,6 +291,9 @@ class DatabaseService:
             focus_rows.append((
                 r["session_id"], ts, ts, ts,
                 r.get("head_pose_score", 0.0),
+                r.get("eye_score", 0.0),
+                r.get("yawn_score", 0.0),
+                r.get("distance_score", 0.0),
                 r.get("behavior_score", 0.0),
                 r.get("expression_score", 0.0),
                 r.get("evidence_score", 0.0),
