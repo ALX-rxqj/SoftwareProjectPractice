@@ -219,7 +219,7 @@ class FilterSidebar(QFrame):
 
         for label_text, spin_ref, default_val in [
             ("最少:", "abnormal_min_spin", 0),
-            ("最多:", "abnormal_max_spin", 100),
+            ("最多:", "abnormal_max_spin", 9999),
         ]:
             row = QHBoxLayout()
             row.setSpacing(get_spacing("tight"))
@@ -227,7 +227,7 @@ class FilterSidebar(QFrame):
             lbl.setFont(QFont(*get_font("sm")))
             lbl.setStyleSheet(get_style("label_hint"))
             spin = QSpinBox()
-            spin.setRange(0, 100)
+            spin.setRange(0, 2147483647)
             spin.setValue(default_val)
             spin.setFont(QFont(*get_font("sm")))
             spin.setStyleSheet(get_style("spin_box"))

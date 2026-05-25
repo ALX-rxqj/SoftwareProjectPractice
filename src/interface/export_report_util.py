@@ -167,7 +167,7 @@ def export_to_excel(session: dict, records: list, alerts: list, filepath: str):
 
     _write_header(ws2, 1, record_headers)
 
-    for row, record in enumerate(records, 2):
+    for row, record in enumerate(records[:100], 2):
         values = [
             f"{record.get('timestamp', 0):.1f}",
             f"{record.get('head_pose_score', 0):.1f}",
@@ -330,10 +330,10 @@ def export_to_pdf(session: dict, records: list, alerts: list, filepath: str):
     elements.append(Paragraph("二、关键帧专注度", section_style))
     elements.append(Spacer(1, 2 * mm))
 
-    # 记录表格（取前 30 条摘要避免过长）
+    # 记录表格（取前 100 条摘要避免过长）
     table_headers = ["时间戳", "头部姿态", "眼部状态", "哈欠检测", "人脸距离", "证据理论", "人数项", "最终专注度"]
     table_data = [table_headers]
-    display_records = records
+    display_records = records[:100]
     for r in display_records:
         table_data.append([
             f"{r.get('timestamp', 0):.1f}s",
