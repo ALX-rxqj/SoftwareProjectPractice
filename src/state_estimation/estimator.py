@@ -63,13 +63,13 @@ FORCE_ZERO_THRESHOLD = {
 
 # --- 时序低头检测（仅 class 模式） ---
 # 用于区分低头写笔记/做题（周期性抬头）和低头玩手机（持续低头）
-# pitch > 阈值 且 |yaw| ≤ 阈值 时计时器走表
+# pitch > 阈值 且 |yaw| ≤ 阈值 时计时器走表（使用真实时间戳差，不依赖帧率）
 # 间隙容忍：条件违反 ≤ 3 秒不计入复位，超过 3 秒清零
-TEMPORAL_DOWN_PITCH_THRESHOLD = 8       # pitch 低头触发线（与 HEAD_POSE_NORMAL_PITCH_DOWN 一致）
-TEMPORAL_DOWN_YAW_NORMAL = 8            # yaw 正常范围上限（与 HEAD_POSE_NORMAL_YAW["class"] 一致）
-TEMPORAL_GAP_TOLERANCE_FRAMES = 90      # 间隙容忍帧数（3s @30fps）
-TEMPORAL_T_MAX_FRAMES = 900             # 累计帧数阈值（30s @30fps）
-TEMPORAL_STEP_FRAMES = 150              # 每步帧数（5s @30fps）
+TEMPORAL_DOWN_PITCH_THRESHOLD = 8       # pitch 低头触发线
+TEMPORAL_DOWN_YAW_NORMAL = 8            # yaw 正常范围上限
+TEMPORAL_GAP_TOLERANCE_S = 3.0          # 间隙容忍秒数
+TEMPORAL_T_MAX_S = 30.0                 # 累计秒数阈值
+TEMPORAL_STEP_S = 5.0                   # 每步秒数
 TEMPORAL_STEP_MASS = 0.2                # 每步增加 mass 量
 TEMPORAL_MAX_MASS = 1.0                 # 时序 mass 上限
 
@@ -99,8 +99,9 @@ class FocusEstimator:
         self._abnormal_count = 0
         self._smoothed: Dict[str, float] = {}
         self._smoothed_spatial = 0.0
-        self._down_frames = 0
-        self._gap_frames = 0
+        self._down_accum = 0.0
+        self._prev_ts = 0.0
+        self._gap_accum = 0.0
 
     def set_mode(self, mode: MonitorMode):
         """设置评估模式（CLASS / EXAM）"""
@@ -132,14 +133,21 @@ class FocusEstimator:
         # 2. 四源各自计算 m({不专注})
         # head_pose 拆分：spatial（yaw/roll/pitch 即时） + temporal（持续低头检测）
         spatial_mass = self._head_pose_mass(feature_data.head_pose, mode_key)
-        temporal_mass = self._compute_temporal_mass(feature_data.head_pose, mode_key)
+        temporal_mass = self._compute_temporal_mass(
+            feature_data.head_pose, feature_data.timestamp, mode_key
+        )
         head_pose_raw = max(spatial_mass, temporal_mass)
+
+        # distance: 屏蔽 too_close（人脸离摄像头太近通常是坐姿前倾，不扣分）
+        dist_state = feature_data.face_distance_state
+        if dist_state and dist_state.get("value") == 2:
+            dist_state = {"value": 0, "confidence": dist_state.get("confidence", 1.0)}
 
         raw_masses = {
             "head_pose": head_pose_raw,
             "eye":       self._binary_mass(feature_data.eye_state, EVIDENCE_DISCOUNT_EYE_STATE[mode_key], conf_remap=True),
             "yawn":      self._binary_mass(feature_data.is_yawning, EVIDENCE_DISCOUNT_YAWNING[mode_key]),
-            "distance":  self._binary_mass(feature_data.face_distance_state, EVIDENCE_DISCOUNT_DISTANCE[mode_key]),
+            "distance":  self._binary_mass(dist_state, EVIDENCE_DISCOUNT_DISTANCE[mode_key]),
         }
 
         # 3. EMA 时序平滑（非对称：慢升快降）
@@ -250,8 +258,8 @@ class FocusEstimator:
             "people":    people_score,
             "final_focus": final_focus,
             # 时序低头计时器状态（调试用）
-            "temporal_down_frames": self._down_frames,
-            "temporal_gap_frames": self._gap_frames,
+            "temporal_down_s": self._down_accum,
+            "temporal_gap_s": self._gap_accum,
         }
         return scores, is_force_zero, is_over_threshold, tuple(warn_candidates)
 
@@ -260,8 +268,9 @@ class FocusEstimator:
         self._abnormal_count = 0
         self._smoothed.clear()
         self._smoothed_spatial = 0.0
-        self._down_frames = 0
-        self._gap_frames = 0
+        self._down_accum = 0.0
+        self._prev_ts = 0.0
+        self._gap_accum = 0.0
 
     @property
     def abnormal_count(self) -> int:
@@ -338,7 +347,7 @@ class FocusEstimator:
             candidates.append(alpha * ratio * confidence)
 
         if not candidates:
-            return 0.0
+            return self._reverse_mass(confidence, alpha)
         return min(max(candidates), 1.0)
 
     # ================================================================
@@ -385,9 +394,16 @@ class FocusEstimator:
             else:
                 effective_conf = confidence
             return alpha * effective_conf
-        # 正常分支：统一反向 mass 映射（连续，无硬截断）
-        # conf [0, threshold] → mass [β, min]   传感器不太信自己 → 反向 mass 较高
-        # conf [threshold, 1] → mass [min, 0]   传感器确信正常   → 微量残留 mass
+        # 正常分支：传感器报告正常 → 反向 mass
+        return self._reverse_mass(confidence, alpha)
+
+    @staticmethod
+    def _reverse_mass(confidence: float, alpha: float) -> float:
+        """传感器报告正常时的反向 mass（连续，无硬截断）。
+
+        conf [0, threshold] → mass [β, min]   低置信度 → 高怀疑
+        conf [threshold, 1] → mass [min, 0]   高置信度 → 微量残留
+        """
         if confidence <= REVERSE_MASS_CONF_THRESHOLD:
             ratio = 1.0 - confidence / REVERSE_MASS_CONF_THRESHOLD
             mass = REVERSE_MASS_MIN + (REVERSE_MASS_BETA - REVERSE_MASS_MIN) * ratio
@@ -400,18 +416,19 @@ class FocusEstimator:
     # 时序低头检测 → m({不专注})
     # ================================================================
 
-    def _compute_temporal_mass(self, head_pose: Dict, mode_key: str) -> float:
+    def _compute_temporal_mass(self, head_pose: Dict, timestamp: float,
+                               mode_key: str) -> float:
         """
         基于持续低头时长的 m({不专注})，仅 class 模式生效。
 
         exam 模式返回 0，计时器不运作。
 
-        计时规则：
-        - pitch > 8° 且 |yaw| ≤ 8° → 计时器走表
-        - 条件违反 ≤ 90 帧（3s）→ 计时器暂停不重置
-        - 条件违反 > 90 帧 → 计时器清零
-        - 累计 ≥ 900 帧（30s）后开始产出 mass
-        - 之后每 150 帧（5s）+0.1，上限 0.6
+        计时规则（基于真实时间戳差）：
+        - pitch > 8° 且 |yaw| ≤ 8° → 累计秒数增长
+        - 条件违反 ≤ 3s → 累计暂停不重置
+        - 条件违反 > 3s → 累计清零
+        - 累计 ≥ 30s 后开始产出 mass
+        - 之后每 5s +0.2，上限 1.0
         """
         if mode_key != "class":
             return 0.0
@@ -420,25 +437,28 @@ class FocusEstimator:
         yaw = abs(head_pose.get("yaw", 0.0))
         confidence = head_pose.get("confidence", 1.0)
 
+        dt = timestamp - self._prev_ts if self._prev_ts > 0 else 0.0
+        self._prev_ts = timestamp
+
         condition_met = (
             pitch > TEMPORAL_DOWN_PITCH_THRESHOLD
             and yaw <= TEMPORAL_DOWN_YAW_NORMAL
         )
 
         if condition_met:
-            self._down_frames += 1
-            self._gap_frames = 0
+            self._down_accum += dt
+            self._gap_accum = 0.0
         else:
-            self._gap_frames += 1
-            if self._gap_frames > TEMPORAL_GAP_TOLERANCE_FRAMES:
-                self._down_frames = 0
+            self._gap_accum += dt
+            if self._gap_accum > TEMPORAL_GAP_TOLERANCE_S:
+                self._down_accum = 0.0
 
-        if self._down_frames < TEMPORAL_T_MAX_FRAMES:
+        if self._down_accum < TEMPORAL_T_MAX_S:
             return 0.0
 
-        excess = self._down_frames - TEMPORAL_T_MAX_FRAMES
+        excess = self._down_accum - TEMPORAL_T_MAX_S
         penalty = min(TEMPORAL_MAX_MASS,
-                      (excess / TEMPORAL_STEP_FRAMES) * TEMPORAL_STEP_MASS)
+                      (excess / TEMPORAL_STEP_S) * TEMPORAL_STEP_MASS)
         alpha = EVIDENCE_DISCOUNT_HEAD_POSE[mode_key]
         return alpha * penalty * confidence
 
