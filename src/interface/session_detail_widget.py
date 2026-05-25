@@ -27,6 +27,11 @@ class SessionDetailWidget(QFrame):
         self.setGraphicsEffect(create_card_shadow(elevated=True))
         self.current_session = {}
         self.current_records = []
+        self._pan_pressed = False
+        self._pan_start_x = None
+        self._pan_start_y = None
+        self._pan_start_xlim = None
+        self._pan_start_ylim = None
         self.init_ui()
 
     def init_ui(self):
@@ -132,6 +137,9 @@ class SessionDetailWidget(QFrame):
         self.figure = Figure(facecolor=COLORS["background"])
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setStyleSheet(f"background-color: {COLORS['background']};")
+        self.canvas.mpl_connect("button_press_event", self._on_mouse_press)
+        self.canvas.mpl_connect("button_release_event", self._on_mouse_release)
+        self.canvas.mpl_connect("motion_notify_event", self._on_mouse_motion)
         chart_layout.addWidget(self.canvas)
         layout.addWidget(self.chart_container, 2)
 
@@ -302,6 +310,33 @@ class SessionDetailWidget(QFrame):
             event.ydata - (cur_ylim[1] - cur_ylim[0]) * scale_factor * (1 - rely),
             event.ydata + (cur_ylim[1] - cur_ylim[0]) * scale_factor * rely,
         ])
+        self.canvas.draw_idle()
+
+    def _on_mouse_press(self, event):
+        if event.button != 1 or event.xdata is None or event.ydata is None:
+            return
+        ax = getattr(self, "_ax", None)
+        if ax is None:
+            return
+        self._pan_pressed = True
+        self._pan_start_x = event.xdata
+        self._pan_start_y = event.ydata
+        self._pan_start_xlim = ax.get_xlim()
+        self._pan_start_ylim = ax.get_ylim()
+
+    def _on_mouse_release(self, event):
+        self._pan_pressed = False
+
+    def _on_mouse_motion(self, event):
+        if not self._pan_pressed or event.xdata is None or event.ydata is None:
+            return
+        ax = getattr(self, "_ax", None)
+        if ax is None:
+            return
+        dx = event.xdata - self._pan_start_x
+        dy = event.ydata - self._pan_start_y
+        ax.set_xlim([self._pan_start_xlim[0] - dx, self._pan_start_xlim[1] - dx])
+        ax.set_ylim([self._pan_start_ylim[0] - dy, self._pan_start_ylim[1] - dy])
         self.canvas.draw_idle()
 
     def _on_alert_info_clicked(self):
